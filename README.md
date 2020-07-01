@@ -10,3 +10,9 @@ Then dump it into the StatsimusPrime folder here.
  $ source venv/bin/activate
  (venv) $ pip install -r requirements.txt
 ```
+
+# To Do
+ - [ ] Add permissions support
+ - [ ] fix Statistics_template
+ - [ ] Add cli support
+ - [ ] Add meet-to-meet YTD support
