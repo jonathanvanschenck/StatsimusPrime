@@ -1,152 +1,48 @@
-# Adapted from https://developers.google.com/docs/api/quickstart/python
 
-import pickle
-import os
-
-from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from apiclient import errors
-from apiclient.http import MediaFileUpload
-
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets',
-          'https://www.googleapis.com/auth/drive']
-
+class IDError(Exception):
+    pass
 
 class Service:
-    def __init__(self,working_directory=None):
-        if working_directory is None:
-            wd = os.getcwd()
-        else:
-            wd = working_directory
-        tokenfp = os.path.join(wd,'token.pickle')
-        credfp = os.path.join(wd,'credentials.json')
-        self.ssfp = os.path.join(wd,'templates','Scoresheet_template.xlsx')
-        self.statsfp = os.path.join(wd,'templates','Statistics_template.xlsx')
-        self.envfp = os.path.join(wd,'.env')
-        creds = None
-        if os.path.exists(tokenfp):
-            with open(tokenfp, 'rb') as token:
-                creds = pickle.load(token)
-        # If there are no (valid) credentials available, let the user log in.
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                            credfp,
-                            SCOPES
-                        )
-                creds = flow.run_local_server(port=0)
-            # Save the credentials for the next run
-            with open(tokenfp, 'wb') as token:
-                pickle.dump(creds, token)
+    def __init__(self, google_service_object, id = None):
+        self.service = google_service_object
+        self.id = id
 
-        self.drive_service = build('drive', 'v3', credentials=creds)
-        self.sheets_service = build('sheets', 'v4', credentials=creds)
+    @property
+    def id(self):
+        if self.__id is None:
+            raise IDError("Service id is uninitialized, use .initialize_env(...)")
+        return self.__id
+    @id.setter
+    def id(self,id):
+        self.__id = str(id)
+
 
     def __repr__(self):
-        return "<Service Object>"
+        return "<Base Service Object>"
 
-    def initialize_env(self,top_folder_id):
-        files = self.get_all_children(top_folder_id)
+class DriveService(Service):
+    def __init__(self, google_service_object, id = None, trash_id = None):
+        Service.__init__(self, google_service_object, id)
+        self.trash_id = None
 
-        trash_id = None
-        scoresheets_id = None
-        stats_id = None
-        ss_template_id = None
-        for _f in files:
-            if _f['mimeType'] == 'application/vnd.google-apps.folder':
-                if _f['name'] == 'trash':
-                    trash_id = _f['id']
-                elif _f['name'] == 'scoresheets':
-                    scoresheets_id = _f['id']
-            elif _f['mimeType'] == 'application/vnd.google-apps.spreadsheet':
-                if _f['name'] == 'Statistics':
-                    stats_id = _f['id']
-                elif _f['name'] == 'Scoresheet_template':
-                    ss_template_id = _f['id']
+    def __repr__(self):
+        return "<DriveService Object>"
 
-        file_metadata = {
-            'name': '',
-            'mimeType': 'application/vnd.google-apps.folder',
-            'parents': [top_folder_id]
-        }
-        if trash_id is None:
-            file_metadata['name'] = 'trash'
-            _f = self.drive_service.files().create(
-                body = file_metadata,
-                fields = 'id'
-            ).execute()
-            trash_id = _f.get('id')
-        if scoresheets_id is None:
-            file_metadata['name'] = 'scoresheets'
-            _f = self.drive_service.files().create(
-                body = file_metadata,
-                fields = 'id'
-            ).execute()
-            scoresheets_id = _f.get('id')
-
-        file_metadata = {
-            'name': '',
-            'mimeType': 'application/vnd.google-apps.spreadsheet',
-            'parents': [top_folder_id]
-        }
-        if stats_id is None:
-            file_metadata['name'] = 'Statistics'
-            media = MediaFileUpload(
-                self.statsfp,
-                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                resumable=True
-            )
-            _f = self.drive_service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id'
-            ).execute()
-            stats_id = _f.get('id')
-        if ss_template_id is None:
-            file_metadata['name'] = 'Scoresheet_template'
-            media = MediaFileUpload(
-                self.ssfp,
-                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                resumable=True
-            )
-            _f = self.drive_service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id'
-            ).execute()
-            ss_template_id = _f.get('id')
-
-
-        with open(self.envfp, "w") as f:
-            f.write("top_folder_id={}\n".format(top_folder_id))
-            f.write("trash_id={}\n".format(trash_id))
-            f.write("scoresheets_id={}\n".format(scoresheets_id))
-            f.write("stats_id={}\n".format(stats_id))
-            f.write("ss_template_id={}\n".format(ss_template_id))
-
-        self.load_env()
-
-        return self
-
-    def load_env(self):
-        with open(self.envfp) as f:
-            self.top_folder_id = f.readline().strip().split("=")[1]
-            self.trash_id = f.readline().strip().split("=")[1]
-            self.scoresheets_id = f.readline().strip().split("=")[1]
-            self.stats_id = f.readline().strip().split("=")[1]
-            self.ss_template_id = f.readline().strip().split("=")[1]
-
-        return self
+    @property
+    def trash_id(self):
+        if self.__trash_id is None:
+            raise IDError("Service id is uninitialized, use .initialize_env(...)")
+        return self.__trash_id
+    @trash_id.setter
+    def trash_id(self,id):
+        self.__trash_id = str(id)
 
     def get_all_children(self,folder_id):
         # adapted from https://developers.google.com/drive/api/v3/search-files
         page_token = None
         children = []
         while True:
-            response = self.drive_service.files().list(
+            response = self.service.files().list(
                 q="'{}' in parents".format(folder_id),
                 spaces='drive',
                 fields='nextPageToken, files(id, name, mimeType)',
@@ -165,13 +61,13 @@ class Service:
 
     def move_to_trash(self,file_id):
         # Get file's current parents
-        file = self.drive_service.files().get(
+        file = self.service.files().get(
             fileId=file_id,
             fields='name, parents'
         ).execute()
         # Remove old parents and attach new parent "trash"
         previous_parents = ",".join(file.get('parents'))
-        file = self.drive_service.files().update(
+        file = self.service.files().update(
             fileId=file_id,
             addParents=self.trash_id,
             removeParents=previous_parents,
@@ -181,5 +77,17 @@ class Service:
 
         return self
 
-    def reset_all(self):
-        pass
+    def delete_file(self,id):
+        self.service.files().delete(fileId = id)
+
+    def empty_trash(self):
+        for file in self.get_all_children(self.trash_id):
+            self.delete_file(file['id'])
+
+class StatsService(Service):
+    def __repr__(self):
+        return "<StatsService Object>"
+
+class ScoresheetService(Service):
+    def __repr__(self):
+        return "<ScoresheetService Object>"

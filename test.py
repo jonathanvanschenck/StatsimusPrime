@@ -1,3 +1,3 @@
-from statsimusprime.service import Service
+from statsimusprime.manager import Manager
 
-s = Service()
+m = Manager()

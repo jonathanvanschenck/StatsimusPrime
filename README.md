@@ -16,3 +16,5 @@ Then dump it into the StatsimusPrime folder here.
  - [ ] fix Statistics_template
  - [ ] Add cli support
  - [ ] Add meet-to-meet YTD support
+ - [ ] handle time outs?
+ - [ ] handle substitutions?
