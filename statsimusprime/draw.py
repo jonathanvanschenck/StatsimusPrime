@@ -451,21 +451,54 @@ class Draw:
 
         Teams are comma delimited, quizzes are semi-colon delimited, and slots
         are cariage-return delimited
-
-        If you give the function a list of the true team names, it will render
-        the draw with the true team names, not their placeholder utf-8 character.
         """
-        sw = swaplist or self.Tlist
-        assert len(sw) == self.T, "Incorrect number of teams"
-        index = {char:i for i,char in enumerate(self.Tlist)}
         l = [
             ";".join([
-                sw[index[q.s[0]]]+","+sw[index[q.s[1]]]+","+sw[index[q.s[2]]]\
-                    for q in s
-            ]) for s in self.draw
+                ",".join([
+                    char for char in str(q)[str(q).index("<")+1:str(q).index(">")]
+                ]) for q in s ]) for s in self.draw
         ]
         l.insert(self.breakindex,"")
         return "\n".join(l)
+
+    @classmethod
+    def from_text(cls,file_path):
+        """Reconstruct a draw from a file genereated by `.to_text()`
+        """
+        with open(file_path) as f:
+            draw = []
+            for l in f:
+                draw.append([q.split(",") for q in l.strip().split(";")])
+
+        team = []
+        for s in draw:
+            for q in s:
+                for char in q:
+                    team.append(char)
+
+        swaplist = [char for char in set(team) if char != '' and char != '_']
+
+        nTeams = len(swaplist)
+        QpT = len([char for char in team if char == 'A'])
+        breakless = [s for s in draw if s != [['']]]
+        nRooms = len(breakless[0])
+        try:
+            breakloc = draw.index([['']]) / len(breakless)
+        except ValueError:
+            breakloc = 1.1
+        numblanks = len([char for char in team if char == "_"])//3
+        new_cls = cls(nTeams,QpT,nRooms,breakloc,numblanks)
+
+        for si,s in enumerate(breakless):
+            for ri,q in enumerate(s):
+                if q != ['_','_','_']:
+                    for char in q:
+                        new_cls.push(char,si,ri)
+
+        new_cls.E = new_cls.get_total_energy()
+
+        return new_cls
+
 
 
 if __name__ == "__main__":
