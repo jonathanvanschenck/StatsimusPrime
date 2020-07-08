@@ -76,7 +76,8 @@ class Draw:
 
     Implemented also is a Simulated Annealing algorithm, which is basically just
     MH, but you start with a high temperature and then slowly drop it each iteration,
-    this is accessable through the ".anneal(...)" method.
+    this is accessable through the ".anneal(...)" method. Many thanks to Ted Towers
+    (github.com/tcubed) for the idea to add this functionality!
 
     :: Example Usage MH Algorithm::
     >>> T = 18 # number of teams
