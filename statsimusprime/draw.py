@@ -1,5 +1,5 @@
 from random import randint,random, choice
-from math import ceil, exp
+from math import ceil, exp, log10
 
 class Quiz:
     """Base class for a single quiz
@@ -74,7 +74,11 @@ class Draw:
     will randomize the draw, and then again with a very small kT value to "freeze"
     the draw into an energetic minimum. See the example below.
 
-    :: Example Usage ::
+    Implemented also is a Simulated Annealing algorithm, which is basically just
+    MH, but you start with a high temperature and then slowly drop it each iteration,
+    this is accessable through the ".anneal(...)" method.
+
+    :: Example Usage MH Algorithm::
     >>> T = 18 # number of teams
     >>> QpT = 7 # number of quizzes per team
     >>> R = 6 # number of rooms
@@ -87,13 +91,25 @@ class Draw:
     >>> d.thermalize(10**4, kT = 0.001, alpha = 0.2, verbose=True)
     >>> stats = d.get_stats(verbose=True) # Print out statistics on the draw
     >>> print(d.to_text()) # Format into text
+
+    :: Example Usage SA Algorithm::
+    >>> T = 18 # number of teams
+    >>> QpT = 7 # number of quizzes per team
+    >>> R = 6 # number of rooms
+    >>> breaklocation = 0.5 # location of the day break
+    >>> d = Draw(T,QpT,R,breaklocation)
+    >>> d.initialize() # Create an initial (bad) draw
+    >>> print("Annealing") # Randomize
+    >>> d.anneal(10**5, verbose=True)
+    >>> stats = d.get_stats(verbose=True) # Print out statistics on the draw
+    >>> print(d.to_text()) # Format into text
     """
 
     # Energy penalties for each "undesirable" event type
     back_to_back = 0.3
     hat_trick = 1.0
     already_seen = 0.1
-    already_quizzed = 0.01
+    already_quizzed = 0.05
     currently_quizzing = 10.0
 
     def __init__(self, nTeams, QpT, nRooms, breakloc = None, numblanks = None):
@@ -252,11 +268,9 @@ class Draw:
         self.E = self.get_total_energy()
         return self
 
-    def interchange_team(self,char1,qi1,char2,qi2,kT = 1.0):
+    def interchange_team(self,char1,si1,ri1,char2,si2,ri2,kT = 1.0):
         """Attempt to interchange two teams using the Metropolis Algorithm
         """
-        si1,ri1 = self.Tquiz[char1][qi1]
-        si2,ri2 = self.Tquiz[char2][qi2]
         # Interchange two teams
         self.pop(char1,si1,ri1)
         self.pop(char2,si2,ri2)
@@ -265,25 +279,30 @@ class Draw:
         # Get the new total energy
         Enew = self.get_total_energy()
         deltaE = Enew-self.E
+        try:
+            prob = exp(-(deltaE)/kT)
+        except (ZeroDivisionError, OverflowError):
+            prob = 0.0
         if deltaE < 0:
             # Accept the interchange
             self.E += deltaE
-            return True
-        elif random() < exp(-(deltaE)/kT):
+            return True, deltaE
+        elif random() < prob:
             # Accept the interchange
             self.E += deltaE
-            return True
+            return True, deltaE
         else:
             # Reject the interchange
             self.pop(char2, si1, ri1)
             self.pop(char1, si2, ri2)
             self.push(char1, si1, ri1)
             self.push(char2, si2, ri2)
-            return False
+            return False, deltaE
 
     def interchange_quiz(self,qn1,qn2,kT = 1.0):
         """Attempt to interchange two quizzes using the Metropolis Algorithm
         """
+        override = (kT == 0.0)
         # Get the slot index and room index from the quiz number
         si1,ri1 = qn1 // self.R, qn1 % self.R
         si2,ri2 = qn2 // self.R, qn2 % self.R
@@ -304,14 +323,18 @@ class Draw:
         # Get the new total energy
         Enew = self.get_total_energy()
         deltaE = Enew-self.E
+        try:
+            prob = exp(-(deltaE)/kT)
+        except (ZeroDivisionError, OverflowError):
+            prob = 0.0
         if deltaE < 0:
             # Accept the interchange
             self.E += deltaE
-            return True
-        elif random() < exp(-(deltaE)/kT):
+            return True, deltaE
+        elif random() < prob:
             # Accept the interchange
             self.E += deltaE
-            return True
+            return True, deltaE
         else:
             # Reject the interchange
             for char in char1:
@@ -322,9 +345,9 @@ class Draw:
                 self.push(char,si1,ri1)
             for char in char2:
                 self.push(char,si2,ri2)
-            return False
+            return False, deltaE
 
-    def step(self,kT = 1.0, alpha = 0.1):
+    def _thermalization_step(self,kT = 1.0, alpha = 0.1):
         """Iterate once through the Metropolis Algorithm
         """
         if random() > alpha:
@@ -333,24 +356,44 @@ class Draw:
             ci2 = (ci1 + ci2) % self.T
             char1,char2 = self.Tlist[ci1],self.Tlist[ci2]
             qi1,qi2 = randint(0,self.qpt-1), randint(0,self.qpt-1)
-            return self.interchange_team(char1,qi1,char2,qi2,kT=kT)
+            si1,ri1 = self.Tquiz[char1][qi1]
+            si2,ri2 = self.Tquiz[char2][qi2]
+            return self.interchange_team(char1,si1,ri1,char2,si2,ri2,kT=kT)
         else:
             # Try a quiz interchange
             qn1,qn2 = randint(0,self.Q+self.B-1),randint(0,self.Q+self.B-1)
             return self.interchange_quiz(qn1,qn2,kT=kT)
-
 
     def thermalize(self, N, kT = 0.5, alpha = 0.1,verbose=False):
         """Run through the Metropolis Algorithm to randomize the draw
         """
         j = 0
         for i in range(N):
-            self.step(kT=kT,alpha=alpha)
+            self._thermalization_step(kT=kT,alpha=alpha)
             if (i % (N//20)) == 0:
                 j += 1
                 if verbose:
                     print("{: >3}% : E = {:.1f} : E/T = {:.2f} : E/Q = {:.3f}".format(5*j,self.E,self.E/self.T,self.E/(3*self.Q)))
         return self
+
+    def anneal(self, N, kTmax = 5, kTmin = 1e-3, alpha = 0.2, verbose = False, log = True):
+        """Run through the Simulated Annealing algorithm to randomize the draw
+        """
+        if log:
+            lkTmax,lkTmin = log10(kTmax), log10(kTmin)
+            step = (lkTmin-lkTmax)/N
+            kT_list = [10.0**(lkTmax + step*i) for i in range(N)]
+        else:
+            step = (kTmin-kTmax)/N
+            kT_list = [kTmax + step*i for i in range(N)]
+        j = 0
+        for i,kT in enumerate(kT_list):
+            self._thermalization_step(kT,alpha)
+            if (i % (N//20)) == 0:
+                j += 1
+                if verbose:
+                    print("{: >3}% : kT = {: >1.3f} : E = {:.1f} : E/T = {:.2f} : E/Q = {:.3f}".format(5*j, kT,self.E,self.E/self.T,self.E/(3*self.Q)))
+
 
     def get_stats(self,verbose=False):
         """Generate statistics on the draw

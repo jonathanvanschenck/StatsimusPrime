@@ -1,5 +1,7 @@
 token.pickle
 credentials.json
+*.dat
+*.tsv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
