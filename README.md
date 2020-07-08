@@ -18,3 +18,4 @@ Then dump it into the StatsimusPrime folder here.
  - [ ] Add meet-to-meet YTD support
  - [ ] handle time outs?
  - [ ] handle substitutions?
+ - [x] Add draw creation support

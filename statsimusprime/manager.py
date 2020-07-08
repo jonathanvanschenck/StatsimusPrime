@@ -47,7 +47,7 @@ class Manager:
         self.drive_service = DriveService(build('drive', 'v3', credentials=creds))
         ss = build('sheets', 'v4', credentials=creds)
         self.stats_service = StatsService(ss)
-        self.ss_serice = ScoresheetService(ss)
+        self.ss_service = ScoresheetService(ss)
 
         try:
             self.load_env()
@@ -151,5 +151,13 @@ class Manager:
             self.scoresheets_id = f.readline().strip().split("=")[1]
             self.stats_id = f.readline().strip().split("=")[1]
             self.ss_template_id = f.readline().strip().split("=")[1]
+
+        self.drive_service.id = self.top_folder_id
+        self.drive_service.trash_id = self.trash_id
+
+        self.stats_service.id = self.stats_id
+
+        self.ss_service.id = self.scoresheets_id
+        self.ss_service.template_id = self.ss_template_id
 
         return self

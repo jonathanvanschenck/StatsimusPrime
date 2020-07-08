@@ -14,8 +14,7 @@ class Service:
         return self.__id
     @id.setter
     def id(self,id):
-        self.__id = str(id)
-
+        self.__id = id
 
     def __repr__(self):
         return "<Base Service Object>"
@@ -23,7 +22,7 @@ class Service:
 class DriveService(Service):
     def __init__(self, google_service_object, id = None, trash_id = None):
         Service.__init__(self, google_service_object, id)
-        self.trash_id = None
+        self.trash_id = trash_id
 
     def __repr__(self):
         return "<DriveService Object>"
@@ -31,11 +30,11 @@ class DriveService(Service):
     @property
     def trash_id(self):
         if self.__trash_id is None:
-            raise IDError("Service id is uninitialized, use .initialize_env(...)")
+            raise IDError("Service trash_id is uninitialized, use .initialize_env(...)")
         return self.__trash_id
     @trash_id.setter
     def trash_id(self,id):
-        self.__trash_id = str(id)
+        self.__trash_id = id
 
     def get_all_children(self,folder_id):
         # adapted from https://developers.google.com/drive/api/v3/search-files
@@ -71,7 +70,7 @@ class DriveService(Service):
             fileId=file_id,
             addParents=self.trash_id,
             removeParents=previous_parents,
-            body = {'name':'_'+file.get('name')}
+            body = {'name':'_'+file.get('name')},
             fields='id, parents'
         ).execute()
 
@@ -89,5 +88,20 @@ class StatsService(Service):
         return "<StatsService Object>"
 
 class ScoresheetService(Service):
+    def __init__(self, google_service_object, id = None, template_id = None):
+        Service.__init__(self, google_service_object, id)
+        self.template_id = template_id
+
     def __repr__(self):
-        return "<ScoresheetService Object>"
+        return "<DriveService Object>"
+
+    @property
+    def template_id(self):
+        if self.__template_id is None:
+            raise IDError("Service template_id is uninitialized, use .initialize_env(...)")
+        return self.__template_id
+    @template_id.setter
+    def template_id(self,id):
+        self.__template_id = id
+
+    def clone_template
