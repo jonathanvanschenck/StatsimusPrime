@@ -155,6 +155,7 @@ class Manager:
             parent_folder_id = self.top_folder_id
         ).get('id')
 
+        print("Copying Statistics")
         # Create a stats backup
         bu_stats_id = self.drive_service.copy_to(
             file_id = self.stats_id,
@@ -170,14 +171,32 @@ class Manager:
                 values = data['values']
             )
 
-        print("Downloading Statistics")
-        self.drive_service.download_sheet_as_excel(
-            file_id = bu_stats_id,
-            destination_file_path = os.path.join(_fp,"Statistics.xlsx")
-        )
+        print("Copying Scoresheets")
+        for ss in self.drive_service.get_all_children(self.scoresheets_id):
+            if ss['mimeType'] == 'application/vnd.google-apps.spreadsheet':
+                print("Copying",ss['name'])
 
-        print("Cleaning up")
+                # Create a backup
+                bu_ss_id = self.drive_service.copy_to(
+                    file_id = ss['id'],
+                    name = ss['name'],
+                    destination_folder_id = bu_id
+                ).get("id")
+
+                # Override all formulas to static values
+                for data in self.ss_service.generate_all_values(ss['id']):
+                    self.ss_service.update_values(
+                        file_id = bu_ss_id,
+                        range = data['range'],
+                        values = data['values']
+                    )
+
+        print("Downloading and cleaning")
         for file in self.drive_service.get_all_children(bu_id):
+            self.drive_service.download_sheet_as_excel(
+                file_id = file['id'],
+                destination_file_path = os.path.join(_fp,file['name']+".xlsx")
+            )
             self.drive_service.move_to_trash(file['id'])
 
         self.drive_service.move_to_trash(bu_id)

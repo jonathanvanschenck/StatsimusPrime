@@ -190,3 +190,7 @@ class ScoresheetService(SheetsService):
     @template_id.setter
     def template_id(self,id):
         self.__template_id = id
+
+    def generate_all_values(self,file_id):
+        for range in ['scoresheet!A1:AD55','metadata!A1:P27','parse_individuals!A1:X140','utils!A1:D26']:
+            yield self.get_values(file_id,range)

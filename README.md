@@ -16,6 +16,8 @@ Then dump it into the StatsimusPrime folder here.
  - [ ] fix Statistics_template
  - [ ] Add cli support
  - [ ] Add meet-to-meet YTD support
- - [ ] handle time outs?
+ - [x] handle time outs?
  - [ ] handle substitutions?
  - [x] Add draw creation support
+ - [ ] Add bracket creation support too
+ - [x] Add static backup support
