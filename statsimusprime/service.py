@@ -1,4 +1,8 @@
 
+from apiclient import errors
+from apiclient.http import MediaFileUpload, MediaIoBaseDownload
+
+
 class IDError(Exception):
     pass
 
@@ -83,11 +87,94 @@ class DriveService(Service):
         for file in self.get_all_children(self.trash_id):
             self.delete_file(file['id'])
 
-class StatsService(Service):
+    def create_folder(self,name,parent_folder_id=None):
+        pfid = parent_folder_id or ""
+        file_metadata = {
+            'name': name,
+            'mimeType': 'application/vnd.google-apps.folder',
+            'parents': [pfid]
+        }
+        return self.service.files().create(
+            body = file_metadata,
+            fields = 'id'
+        ).execute()
+
+    def upload_excel_as_sheet(self,name,file_path,parent_folder_id=None):
+        pfid = parent_folder_id or ""
+        file_metadata = {
+            'name': name,
+            'mimeType': 'application/vnd.google-apps.spreadsheet',
+            'parents': [pfid]
+        }
+        media = MediaFileUpload(
+            file_path,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            resumable=True
+        )
+        return self.service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id'
+        ).execute()
+
+    def download_sheet_as_excel(self, file_id, destination_file_path, verbose = False):
+        request = self.service.files().export_media(
+            fileId = file_id,
+            mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        with open(destination_file_path,"wb") as f:
+            downloader = MediaIoBaseDownload(f, request)
+            done = False
+            while done is False:
+                status, done = downloader.next_chunk()
+                if verbose:
+                    print("Download %d%%." % int(status.progress() * 100))
+
+        return self
+
+
+    def copy_to(self, file_id, name, destination_folder_id):
+        return self.service.files().copy(
+            fileId = file_id,
+            body = {
+                'name': name,
+                'parents': [destination_folder_id]
+            }
+        ).execute()
+
+class SheetsService(Service):
+    def __repr__(self):
+        return "<SheetsService Object>"
+
+    def get_values(self, file_id, range):
+        return self.service.spreadsheets().values().get(
+            spreadsheetId = file_id,
+            range = range
+        ).execute()
+
+    def update_values(self, file_id, range, values, value_input_option = "USER_ENTERED",
+                      major_dimension = "ROWS"):
+        # values must be a 2D list, where the outer index matches major_dimension
+        return self.service.spreadsheets().values().update(
+            spreadsheetId = file_id,
+            range = range,
+            valueInputOption = value_input_option,
+            body = {
+                "range" : range,
+                "majorDimension" : major_dimension,
+                "values" : values
+            }
+        ).execute()
+
+class StatsService(SheetsService):
     def __repr__(self):
         return "<StatsService Object>"
 
-class ScoresheetService(Service):
+    def generate_all_values(self):
+        for sheet in ['DRAW','IND']:
+            yield self.get_values(self.id,"'{}'!A1:ZZ300".format(sheet))
+
+class ScoresheetService(SheetsService):
     def __init__(self, google_service_object, id = None, template_id = None):
         Service.__init__(self, google_service_object, id)
         self.template_id = template_id
@@ -103,5 +190,3 @@ class ScoresheetService(Service):
     @template_id.setter
     def template_id(self,id):
         self.__template_id = id
-
-    def clone_template

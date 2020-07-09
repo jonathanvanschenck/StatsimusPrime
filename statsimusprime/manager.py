@@ -2,7 +2,10 @@
 
 import pickle
 import os
+import json
 
+
+from urllib.parse import urlparse
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -52,106 +55,87 @@ class Manager:
         try:
             self.load_env()
         except FileNotFoundError:
-            print("Manager could not find .env file in current directory,\
-                   try calling .initialize_env(...) to generate it, or\
-                   pick a new working directory")
+            print("Manager could not find .env file in current directory,\ntry calling .initialize_env(...) to generate it, or\npick a new working directory")
         else:
             print("Manager initialized")
 
     def __repr__(self):
         return "<Service Object>"
 
-    def initialize_env(self,top_folder_id):
-        files = self.get_all_children(top_folder_id)
+    def initialize_env(self,top_folder_id_or_url):
+        top_folder_id = urlparse(top_folder_id_or_url).path.split("/")[-1]
 
-        trash_id = None
-        scoresheets_id = None
-        stats_id = None
-        ss_template_id = None
+        env = {
+            'top_folder_id': top_folder_id,
+            'trash_id': None,
+            'scoresheets_id': None,
+            'stats_id': None,
+            'ss_template_id': None
+        }
+
+
+        # Check if any of the files or folders already exist
+        files = self.drive_service.get_all_children(top_folder_id)
         for _f in files:
             if _f['mimeType'] == 'application/vnd.google-apps.folder':
                 if _f['name'] == 'trash':
-                    trash_id = _f['id']
+                    env['trash_id'] = _f['id']
+                    print("Found a trash folder in Google Drive")
                 elif _f['name'] == 'scoresheets':
-                    scoresheets_id = _f['id']
+                    env['scoresheets_id'] = _f['id']
+                    print("Found a scoresheets folder in Google Drive")
             elif _f['mimeType'] == 'application/vnd.google-apps.spreadsheet':
                 if _f['name'] == 'Statistics':
-                    stats_id = _f['id']
+                    env['stats_id'] = _f['id']
+                    print("Found a stats document in Google Drive")
                 elif _f['name'] == 'Scoresheet_template':
-                    ss_template_id = _f['id']
+                    env['ss_template_id'] = _f['id']
+                    print("Found a scoresheet template in Google Drive")
 
-        file_metadata = {
-            'name': '',
-            'mimeType': 'application/vnd.google-apps.folder',
-            'parents': [top_folder_id]
-        }
-        if trash_id is None:
-            file_metadata['name'] = 'trash'
-            _f = self.drive_service.files().create(
-                body = file_metadata,
-                fields = 'id'
-            ).execute()
-            trash_id = _f.get('id')
-        if scoresheets_id is None:
-            file_metadata['name'] = 'scoresheets'
-            _f = self.drive_service.files().create(
-                body = file_metadata,
-                fields = 'id'
-            ).execute()
-            scoresheets_id = _f.get('id')
+        # If any don't, create them
+        if env['trash_id'] is None:
+            env['trash_id'] = self.drive_service.create_folder(
+                name='trash',
+                parent_folder_id = top_folder_id
+            ).get('id')
+        if env['scoresheets_id'] is None:
+            scoresheets_id = self.drive_service.create_folder(
+                name='scoresheets',
+                parent_folder_id = top_folder_id
+            ).get('id')
 
-        file_metadata = {
-            'name': '',
-            'mimeType': 'application/vnd.google-apps.spreadsheet',
-            'parents': [top_folder_id]
-        }
-        if stats_id is None:
-            file_metadata['name'] = 'Statistics'
-            media = MediaFileUpload(
-                self.statsfp,
-                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                resumable=True
-            )
-            _f = self.drive_service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id'
-            ).execute()
-            stats_id = _f.get('id')
-        if ss_template_id is None:
-            file_metadata['name'] = 'Scoresheet_template'
-            media = MediaFileUpload(
-                self.ssfp,
-                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                resumable=True
-            )
-            _f = self.drive_service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id'
-            ).execute()
-            ss_template_id = _f.get('id')
+        if env['stats_id'] is None:
+            stats_id = self.drive_service.upload_excel_as_sheet(
+                name = 'Statistics',
+                file_path = self.statsfp,
+                parent_folder_id = top_folder_id
+            ).get('id')
 
+        if env['ss_template_id'] is None:
+            ss_template_id = self.drive_service.upload_excel_as_sheet(
+                name = 'Scoresheet_template',
+                file_path = self.ssfp,
+                parent_folder_id = top_folder_id
+            ).get('id')
 
+        # create the .env backup
         with open(self.envfp, "w") as f:
-            f.write("top_folder_id={}\n".format(top_folder_id))
-            f.write("trash_id={}\n".format(trash_id))
-            f.write("scoresheets_id={}\n".format(scoresheets_id))
-            f.write("stats_id={}\n".format(stats_id))
-            f.write("ss_template_id={}\n".format(ss_template_id))
+            json.dump(env, f, indent=4)
 
-        self.load_env()
-
-        return self
+        return self.load_env()
 
     def load_env(self):
+        # Load .env file
         with open(self.envfp) as f:
-            self.top_folder_id = f.readline().strip().split("=")[1]
-            self.trash_id = f.readline().strip().split("=")[1]
-            self.scoresheets_id = f.readline().strip().split("=")[1]
-            self.stats_id = f.readline().strip().split("=")[1]
-            self.ss_template_id = f.readline().strip().split("=")[1]
+            env = json.load(f)
 
+        self.top_folder_id = env['top_folder_id']#f.readline().strip().split("=")[1]
+        self.trash_id = env['trash_id']#f.readline().strip().split("=")[1]
+        self.scoresheets_id = env['scoresheets_id']#f.readline().strip().split("=")[1]
+        self.stats_id = env['stats_id']#f.readline().strip().split("=")[1]
+        self.ss_template_id = env['ss_template_id']#f.readline().strip().split("=")[1]
+
+        # Activate drive and sheets services
         self.drive_service.id = self.top_folder_id
         self.drive_service.trash_id = self.trash_id
 
@@ -159,5 +143,43 @@ class Manager:
 
         self.ss_service.id = self.scoresheets_id
         self.ss_service.template_id = self.ss_template_id
+
+        return self
+
+    def download_static_image(self,fp=None):
+        _fp = fp or os.getcwd()
+
+        # Create a temporary backup folder
+        bu_id = self.drive_service.create_folder(
+            name = "backup",
+            parent_folder_id = self.top_folder_id
+        ).get('id')
+
+        # Create a stats backup
+        bu_stats_id = self.drive_service.copy_to(
+            file_id = self.stats_id,
+            name = '_Statistics',
+            destination_folder_id = bu_id
+        ).get("id")
+
+        # Override all formulas to static values
+        for data in self.stats_service.generate_all_values():
+            self.stats_service.update_values(
+                file_id = bu_stats_id,
+                range = data['range'],
+                values = data['values']
+            )
+
+        print("Downloading Statistics")
+        self.drive_service.download_sheet_as_excel(
+            file_id = bu_stats_id,
+            destination_file_path = os.path.join(_fp,"Statistics.xlsx")
+        )
+
+        print("Cleaning up")
+        for file in self.drive_service.get_all_children(bu_id):
+            self.drive_service.move_to_trash(file['id'])
+
+        self.drive_service.move_to_trash(bu_id)
 
         return self
