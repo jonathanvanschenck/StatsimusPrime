@@ -70,7 +70,11 @@ class Manager:
             'trash_id': None,
             'scoresheets_id': None,
             'stats_id': None,
-            'ss_template_id': None
+            'ss_template_id': None,
+            'roster': [],
+            'draw': [],
+            'officials': [],
+            "bracket_weights": {"P":1.0,"S":1.0,"A":0.7,"B":0.5}
         }
 
 
@@ -99,20 +103,27 @@ class Manager:
                 parent_folder_id = top_folder_id
             ).get('id')
         if env['scoresheets_id'] is None:
-            scoresheets_id = self.drive_service.create_folder(
+            env['scoresheets_id'] = self.drive_service.create_folder(
                 name='scoresheets',
                 parent_folder_id = top_folder_id
             ).get('id')
 
         if env['stats_id'] is None:
-            stats_id = self.drive_service.upload_excel_as_sheet(
+            env['stats_id'] = self.drive_service.upload_excel_as_sheet(
                 name = 'Statistics',
                 file_path = self.statsfp,
                 parent_folder_id = top_folder_id
             ).get('id')
 
+        if env['viewer_id'] is None:
+            env['viewer_id'] = self.drive_service.upload_excel_as_sheet(
+                name = '_Statistics_Viewer',
+                file_path = self.statsfp,
+                parent_folder_id = env['scoresheets_id']
+            ).get('id')
+
         if env['ss_template_id'] is None:
-            ss_template_id = self.drive_service.upload_excel_as_sheet(
+            env['ss_template_id'] = self.drive_service.upload_excel_as_sheet(
                 name = 'Scoresheet_template',
                 file_path = self.ssfp,
                 parent_folder_id = top_folder_id
@@ -129,22 +140,39 @@ class Manager:
         with open(self.envfp) as f:
             env = json.load(f)
 
-        self.top_folder_id = env['top_folder_id']#f.readline().strip().split("=")[1]
-        self.trash_id = env['trash_id']#f.readline().strip().split("=")[1]
-        self.scoresheets_id = env['scoresheets_id']#f.readline().strip().split("=")[1]
-        self.stats_id = env['stats_id']#f.readline().strip().split("=")[1]
-        self.ss_template_id = env['ss_template_id']#f.readline().strip().split("=")[1]
+        # self.top_folder_id = env['top_folder_id']#f.readline().strip().split("=")[1]
+        # self.trash_id = env['trash_id']#f.readline().strip().split("=")[1]
+        # self.scoresheets_id = env['scoresheets_id']#f.readline().strip().split("=")[1]
+        # self.stats_id = env['stats_id']#f.readline().strip().split("=")[1]
+        # self.ss_template_id = env['ss_template_id']#f.readline().strip().split("=")[1]
+        # self.team_list = env['team_list']
+        # self.roster = env['roster']
+        # self.officals = env['officials']
+
+        self.env = env
 
         # Activate drive and sheets services
-        self.drive_service.id = self.top_folder_id
-        self.drive_service.trash_id = self.trash_id
+        self.drive_service.id = self.env['top_folder_id']
+        self.drive_service.trash_id = self.env['trash_id']
 
-        self.stats_service.id = self.stats_id
+        self.stats_service.id = self.env['stats_id']
+        self.stats_service.viewer_id = self.env['viewer_id']
+        self.stats_service.retrieve_meet_parameters(
+            self.env['roster'],
+            self.env['draw']
+        )
 
-        self.ss_service.id = self.scoresheets_id
-        self.ss_service.template_id = self.ss_template_id
+        self.ss_service.id = self.env['scoresheets_id']
+        self.ss_service.template_id = self.env['ss_template_id']
 
         return self
+
+    def save_env(self):
+
+        #env = {key:self.__getattribute__(key) for key in []}
+
+        with open(self.envfp, "w") as f:
+            json.dump(self.env, f, indent=4)
 
     def download_static_image(self,fp=None):
         _fp = fp or os.getcwd()
@@ -152,13 +180,13 @@ class Manager:
         # Create a temporary backup folder
         bu_id = self.drive_service.create_folder(
             name = "backup",
-            parent_folder_id = self.top_folder_id
+            parent_folder_id = self.env['top_folder_id']
         ).get('id')
 
         print("Copying Statistics")
         # Create a stats backup
         bu_stats_id = self.drive_service.copy_to(
-            file_id = self.stats_id,
+            file_id = self.env['stats_id'],
             name = '_Statistics',
             destination_folder_id = bu_id
         ).get("id")
@@ -172,7 +200,7 @@ class Manager:
             )
 
         print("Copying Scoresheets")
-        for ss in self.drive_service.get_all_children(self.scoresheets_id):
+        for ss in self.drive_service.get_all_children(self.env['scoresheets_id']):
             if ss['mimeType'] == 'application/vnd.google-apps.spreadsheet':
                 print("Copying",ss['name'])
 
@@ -200,5 +228,28 @@ class Manager:
             self.drive_service.move_to_trash(file['id'])
 
         self.drive_service.move_to_trash(bu_id)
+
+        return self
+
+    def generate_quiz_meet(self):
+        # Step 1: Prepare stats document
+        self.stats_service.set_bracket_weights(self.env['bracket_weights'])\
+            .set_roster(self.env['roster'])\
+            .set_draw(self.env['draw'])\
+            .initialize_schedule()\
+            .initialize_team_summary()\
+            .set_team_parsed()\
+            .set_individual_parsed(self.env['roster'])\
+            .initialized_viewer()
+
+
+
+        # Step 2: copy over viewer document
+
+        # Step 2: upload SS template and modify
+
+        # Step 3: copy SS template into SS folder
+
+        # Step 4: Update stats document with scoresheet urls
 
         return self
