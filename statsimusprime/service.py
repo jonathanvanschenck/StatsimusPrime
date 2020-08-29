@@ -134,14 +134,22 @@ class DriveService(Service):
         return self
 
 
-    def copy_to(self, file_id, name, destination_folder_id):
+    def copy_to(self, file_id, name, destination_folder_id, fields = "id"):
         return self.service.files().copy(
             fileId = file_id,
+            fields = fields,
             body = {
                 'name': name,
                 'parents': [destination_folder_id]
             }
         ).execute()
+
+
+    def get_file_url(self, file_id):
+        return self.service.files().get(
+            fileId = file_id,
+            fields = "webViewLink"
+        ).execute().get("webViewLink")
 
 
 
@@ -151,25 +159,36 @@ class SheetsService(Service):
     def __repr__(self):
         return "<SheetsService Object>"
 
-    def get_values(self, file_id, range):
-        return self.service.spreadsheets().values().get(
-            spreadsheetId = file_id,
-            range = range
-        ).execute()
+    @property
+    def id(self):
+        if self.__id is None:
+            raise IDError("Service id is uninitialized, use .initialize_env(...)")
+        return self.__id
+    @id.setter
+    def id(self,id):
+        self.__id = id
+        if not self.__id is None:
+            self.retrieve_spreadsheet_ids()
 
-    def update_values(self, file_id, range, values, value_input_option = "USER_ENTERED",
-                      major_dimension = "ROWS"):
-        # values must be a 2D list, where the outer index matches major_dimension
-        return self.service.spreadsheets().values().update(
-            spreadsheetId = file_id,
-            range = range,
-            valueInputOption = value_input_option,
-            body = {
-                "range" : range,
-                "majorDimension" : major_dimension,
-                "values" : values
-            }
-        ).execute()
+    def retrieve_spreadsheet_ids(self):
+        s = self.service.spreadsheets().get(spreadsheetId = self.__id).execute()
+
+        self.sheet_ids = {
+            sheet['properties']['title']: sheet['properties']['sheetId']\
+            for sheet in s['sheets']
+        }
+
+        self.sheet_properties = {
+            sheet['properties']['title']: sheet['properties']\
+            for sheet in s['sheets']
+        }
+
+        self.named_range_ids = {
+            named_range['name'] : named_range['namedRangeId']\
+            for named_range in s['namedRanges']
+        }
+
+        return self
 
     def batch_update(self, file_id, request_list):
         # request_list = [
@@ -242,8 +261,26 @@ class SheetsService(Service):
 
         return self.service.spreadsheets().values().batchGet(
             spreadsheetId = file_id,
-            valueInputOption = value_input_option,
+            valueRenderOption = value_render_option,
             ranges = range_list
+        ).execute()
+
+    def batch_clear_value(self, file_id, range_list):
+        """Clear values in batch form
+
+        Parameters
+        ----------
+        file_id : str
+            Id of the file to be updated
+
+        range_list : list
+            A list of A1 notation ranges to be cleared from the file.
+
+        """
+
+        return self.service.spreadsheets().values().batchClear(
+            spreadsheetId = file_id,
+            body = {"ranges": range_list}
         ).execute()
 
     def batch_copy_over(self, file_id_source, range_list_source,
@@ -460,9 +497,13 @@ class SheetsService(Service):
             Indicates if gridlines should be hidden. If None, takes default
         """
         gp_json = {
-            "rowCount" : row_count,
-            "columnCount" : column_count
+            "rowCount" : 1000,
+            "columnCount" : 32
         }
+        if not row_count is None:
+            gp_json["rowCount"] = row_count
+        if not column_count is None:
+            gp_json["columnCount"] = column_count
         if not frozen_row_count is None:
             gp_json["frozenRowCount"] = frozen_row_count
         if not frozen_column_count is None:
@@ -515,20 +556,10 @@ class SheetsService(Service):
           }
         }
 
+
 class StatsService(SheetsService):
     def __repr__(self):
         return "<StatsService Object>"
-
-    @property
-    def id(self):
-        if self.__id is None:
-            raise IDError("Service id is uninitialized, use .initialize_env(...)")
-        return self.__id
-    @id.setter
-    def id(self,id):
-        self.__id = id
-        if not self.__id is None:
-            self.retrieve_spreadsheet_ids()
 
     @property
     def viewer_id(self):
@@ -538,23 +569,20 @@ class StatsService(SheetsService):
     @viewer_id.setter
     def viewer_id(self,id):
         self.__viewer_id = id
+        if not self.__viewer_id is None:
+            self.retrieve_viewer_ids()
 
-    def retrieve_spreadsheet_ids(self):
-        s = self.service.spreadsheets().get(spreadsheetId = self.__id).execute()
+    def retrieve_viewer_ids(self):
+        s = self.service.spreadsheets().get(spreadsheetId = self.__viewer_id).execute()
 
-        self.sheet_ids = {
+        self.viewer_sheet_ids = {
             sheet['properties']['title']: sheet['properties']['sheetId']\
             for sheet in s['sheets']
         }
 
-        self.sheet_properties = {
+        self.viewer_sheet_properties = {
             sheet['properties']['title']: sheet['properties']\
             for sheet in s['sheets']
-        }
-
-        self.named_range_ids = {
-            named_range['name'] : named_range['namedRangeId']\
-            for named_range in s['namedRanges']
         }
 
         return self
@@ -568,12 +596,14 @@ class StatsService(SheetsService):
         self.meet_params['total_quiz_slots'] = max([int(quiz['slot_num']) for quiz in draw_json])
         self.meet_params['total_rooms'] = max([int(quiz['room_num']) for quiz in draw_json])
 
-    def generate_all_values(self):
-        for sheet in ['DRAW','IND']:
-            yield self.get_values(self.id,"'{}'!A1:ZZ300".format(sheet))
+    # def generate_all_values(self):
+    #     for sheet in ['DRAW','IND']:
+    #         yield self.get_values(self.id,"'{}'!A1:ZZ300".format(sheet))
 
-    def generate_update_sheet_dimension_json(self, sheet_title, column_count):
-        """Generate updateSheetPropertiesRequest to change sheet columnCount
+    def generate_update_sheet_dimension_json(self, sheet_property_json,
+                                             column_count = None,
+                                             row_count = None):
+        """Generate updateSheetPropertiesRequest to change sheet columnCount/rowCount
 
         Note, this also updates the `.sheet_properties` object to reflect change
 
@@ -584,16 +614,27 @@ class StatsService(SheetsService):
 
         column_count : int
             The number of columns specified for the sheet
+
+        row_count : int
+            The number of rows specified for the sheet. None means do not change
         """
-        self.sheet_properties[sheet_title] = self.update_sheet_properties_json(
-            self.sheet_properties[sheet_title],
+
+        fields = []
+        if not column_count is None:
+            fields.append("gridProperties.columnCount")
+        if not row_count is None:
+            fields.append("gridProperties.rowCount")
+
+        sheet_property_json = self.update_sheet_properties_json(
+            sheet_property_json,
             grid_properties = self.generate_grid_properties_json(
-                column_count = column_count
+                column_count = column_count,
+                row_count = row_count
             )
         )
         return self.generate_update_sheet_properties_json(
-            self.sheet_properties[sheet_title],
-            fields = "gridProperties.columnCount"
+            sheet_property_json,
+            fields = ",".join(fields)
         )
 
     def set_bracket_weights(self,weights_dictionary):
@@ -768,7 +809,7 @@ class StatsService(SheetsService):
 
         # Set sheet width to 11 + 'total_teams'
         requests.append(self.generate_update_sheet_dimension_json(
-            sheet_title = 'DrawLookup',
+            sheet_property_json = self.sheet_properties['DrawLookup'],
             column_count = 11 + self.meet_params['total_teams']
         ))
 
@@ -861,7 +902,7 @@ class StatsService(SheetsService):
 
         # Set sheet width to 10
         requests.append(self.generate_update_sheet_dimension_json(
-            sheet_title = 'TeamSummary',
+            sheet_property_json = self.sheet_properties['TeamSummary'],
             column_count = 10
         ))
 
@@ -896,8 +937,9 @@ class StatsService(SheetsService):
 
         # Set sheet width to 2 + 4*TRN
         requests.append(self.generate_update_sheet_dimension_json(
-            sheet_title = 'Schedule',
-            column_count = 2 + 4*self.meet_params['total_rooms']
+            sheet_property_json = self.sheet_properties['Schedule'],
+            column_count = 2 + 4*self.meet_params['total_rooms'],
+            row_count = 2 + 3*self.meet_params['total_quiz_slots']
         ))
 
         # Copy down A3:F5
@@ -966,7 +1008,7 @@ class StatsService(SheetsService):
 
         # Set sheet width to 4 + 5*PN
         requests.append(self.generate_update_sheet_dimension_json(
-            sheet_title = 'TeamParsed',
+            sheet_property_json = self.sheet_properties['TeamParsed'],
             column_count = 4 + 5*self.meet_params['prelims_per_team_number']
         ))
 
@@ -1072,7 +1114,7 @@ class StatsService(SheetsService):
 
         # Set sheet width to 8 + 12*(PN+4)
         requests.append(self.generate_update_sheet_dimension_json(
-            sheet_title = 'IndividualParsed',
+            sheet_property_json = self.sheet_properties['IndividualParsed'],
             column_count = 8 + 12*(self.meet_params['prelims_per_team_number'] + 4)
         ))
 
@@ -1133,14 +1175,54 @@ class StatsService(SheetsService):
 
         return self
 
-    def initialized_viewer(self):
+    def initialize_viewer(self):
         """Prepares the viewer's schedule tab
         """
 
-        # TODO: FIX THIS ALL
-        sheet_id = self.sheet_ids['Schedule']
+        # # Clean the viewer
+        # range_list = []
+        #
+        # range_list.append("Schedule!B3:E5")
+        #
+        # self.batch_clear_value(
+        #     file_id = self.viewer_id,
+        #     range_list = range_list
+        # )
+
+
+        sheet_id = self.viewer_sheet_ids['Schedule']
 
         requests = []
+
+        # Set Schedule sheet width to 2 + 4*TRN
+        requests.append(self.generate_update_sheet_dimension_json(
+            sheet_property_json = self.viewer_sheet_properties['Schedule'],
+            column_count = 2 + 4*self.meet_params['total_rooms'],
+            row_count = 2 + 3*self.meet_params['total_quiz_slots']
+        ))
+        # Set DrawLookup sheet to 8 by 2+TQN
+        requests.append(self.generate_update_sheet_dimension_json(
+            sheet_property_json = self.viewer_sheet_properties['DrawLookup'],
+            column_count = 8,
+            row_count = 2 + self.meet_params['total_quizzes']
+        ))
+        # Set Roster sheet to 4*5 + 1 by 2+TN
+        requests.append(self.generate_update_sheet_dimension_json(
+            sheet_property_json = self.viewer_sheet_properties['Roster'],
+            column_count = 1 + 4*5,
+            row_count = 2 + self.meet_params['total_teams']
+        ))
+        # Set TeamSummary sheet to rows 2+TN
+        requests.append(self.generate_update_sheet_dimension_json(
+            sheet_property_json = self.viewer_sheet_properties['TeamSummary'],
+            row_count = 2 + self.meet_params['total_teams']
+        ))
+        # Set IndividualSummary sheet to rows 2+QN+5
+        requests.append(self.generate_update_sheet_dimension_json(
+            sheet_property_json = self.viewer_sheet_properties['IndividualSummary'],
+            row_count = 2 + self.meet_params['total_quizzers'] + 5
+        ))
+
 
         # Copy down A3:F5
         bbox_source = list(self.generate_bbox_from_A1("A3:F5"))
@@ -1175,25 +1257,230 @@ class StatsService(SheetsService):
 
         return self
 
+    # def copy_over_all(self):
+    #     """Copies everything from stats doc to viewer doc
+    #     """
+    #     return self.copy_over_draw()
 
+    def copy_over_schedule(self):
+        """Copies the schedule tab from stats to viewer
+        """
+
+        str_temp = "Schedule!{}:{}"
+        range_list_source = []
+        range_list_dest = []
+
+        # Copy B3:?? to A3:??
+        range_list_source.append(str_temp.format(
+            self.generate_A1_from_RC(2,1),
+            self.generate_A1_from_RC(
+                2 + 3*self.meet_params['total_quiz_slots'] - 1,
+                2 + 4*self.meet_params['total_rooms'] - 1
+            )
+        ))
+        range_list_dest.append(str_temp.format(
+            self.generate_A1_from_RC(2,0),
+            self.generate_A1_from_RC(
+                2 + 3*self.meet_params['total_quiz_slots'] - 1,
+                1 + 4*self.meet_params['total_rooms'] - 1
+            )
+        ))
+
+
+        self.batch_copy_over(
+            file_id_source = self.id,
+            range_list_source = range_list_source,
+            file_id_dest = self.viewer_id,
+            range_list_dest = range_list_dest,
+            value_render_option = "FORMATTED_VALUE",
+            value_input_option = "USER_ENTERED"
+        )
+
+        return self
+
+    def copy_over_draw(self):
+        """Copies the DrawLookup tab from stats to viewer
+        """
+
+        str_temp = "DrawLookup!{}:{}"
+        range_list_source = []
+        range_list_dest = []
+
+        # Copy B3:I(2+TQN) to A3:H(2+TQN)
+        range_list_source.append(str_temp.format(
+            "B3",
+            "I"+str(2+self.meet_params['total_quizzes'])
+        ))
+        range_list_dest.append(str_temp.format(
+            "A3",
+            "H"+str(2+self.meet_params['total_quizzes'])
+        ))
+
+
+        self.batch_copy_over(
+            file_id_source = self.id,
+            range_list_source = range_list_source,
+            file_id_dest = self.viewer_id,
+            range_list_dest = range_list_dest,
+            value_render_option = "FORMATTED_VALUE",
+            value_input_option = "USER_ENTERED"
+        )
+
+        return self
+
+    def copy_over_roster(self):
+        """Copies the DrawLookup tab from stats to viewer
+        """
+
+        str_temp = "Roster!{}:{}"
+        range_list_source = []
+        range_list_dest = []
+
+        # Copy A3:A(2+TN) to A3:A(2+TN)
+        range_list_source.append(str_temp.format(
+            "A3",
+            "A"+str(2+self.meet_params['total_teams'])
+        ))
+        range_list_dest.append(str_temp.format(
+            "A3",
+            "A"+str(2+self.meet_params['total_teams'])
+        ))
+
+        # Copy last four columns of each window over
+        for i in range(5):
+            range_list_source.append(str_temp.format(
+                self.generate_A1_from_RC(
+                    2,
+                    1 + 2 + 6*i
+                ),
+                self.generate_A1_from_RC(
+                    2 + self.meet_params['total_teams'] - 1,
+                    1 + 2 + 6*i + 4 - 1
+                )
+            ))
+            range_list_dest.append(str_temp.format(
+                self.generate_A1_from_RC(
+                    2,
+                    1 + 4*i
+                ),
+                self.generate_A1_from_RC(
+                    2 + self.meet_params['total_teams'] - 1,
+                    1 + 4*i + 4 - 1
+                )
+            ))
+
+
+        self.batch_copy_over(
+            file_id_source = self.id,
+            range_list_source = range_list_source,
+            file_id_dest = self.viewer_id,
+            range_list_dest = range_list_dest,
+            value_render_option = "FORMATTED_VALUE",
+            value_input_option = "USER_ENTERED"
+        )
+
+        return self
+
+    def copy_over_team_summary(self):
+        """Copies the TeamSummary tab from stats to viewer
+        """
+
+        str_temp = "TeamSummary!{}:{}"
+        range_list_source = []
+        range_list_dest = []
+
+        # Copy A3:I(2+TN) to A3:I(2+TN)
+        range_list_source.append(str_temp.format(
+            "A3",
+            "I"+str(2+self.meet_params['total_teams'])
+        ))
+        range_list_dest.append(str_temp.format(
+            "A3",
+            "I"+str(2+self.meet_params['total_teams'])
+        ))
+
+
+        self.batch_copy_over(
+            file_id_source = self.id,
+            range_list_source = range_list_source,
+            file_id_dest = self.viewer_id,
+            range_list_dest = range_list_dest,
+            value_render_option = "FORMATTED_VALUE",
+            value_input_option = "USER_ENTERED"
+        )
+
+        return self
+
+    def copy_over_individual_summary(self):
+        """Copies the IndividualSummary tab from stats to viewer
+        """
+
+        str_temp = "IndividualSummary!{}:{}"
+        range_list_source = []
+        range_list_dest = []
+
+        # Copy A3:A(2+QN) to A3:A(2+QN)
+        range_list_source.append(str_temp.format(
+            "A3",
+            "A"+str(2+self.meet_params['total_quizzers'])
+        ))
+        range_list_dest.append(str_temp.format(
+            "A3",
+            "A"+str(2+self.meet_params['total_quizzers'])
+        ))
+
+        # Copy D3:H(2+QN) to B3:F(2+QN)
+        range_list_source.append(str_temp.format(
+            "D3",
+            "H"+str(2+self.meet_params['total_quizzers'])
+        ))
+        range_list_dest.append(str_temp.format(
+            "B3",
+            "F"+str(2+self.meet_params['total_quizzers'])
+        ))
+
+
+        self.batch_copy_over(
+            file_id_source = self.id,
+            range_list_source = range_list_source,
+            file_id_dest = self.viewer_id,
+            range_list_dest = range_list_dest,
+            value_render_option = "FORMATTED_VALUE",
+            value_input_option = "USER_ENTERED"
+        )
+
+        return self
 
 class ScoresheetService(SheetsService):
-    def __init__(self, google_service_object, id = None, template_id = None):
-        Service.__init__(self, google_service_object, id)
-        self.template_id = template_id
-
     def __repr__(self):
         return "<DriveService Object>"
 
-    @property
-    def template_id(self):
-        if self.__template_id is None:
-            raise IDError("Service template_id is uninitialized, use .initialize_env(...)")
-        return self.__template_id
-    @template_id.setter
-    def template_id(self,id):
-        self.__template_id = id
+    def initialize_global_variables(self, viewer_url):
+        """Initializes the global variables for the scoresheet template
 
-    def generate_all_values(self,file_id):
-        for range in ['scoresheet!A1:AD55','metadata!A1:P27','parse_individuals!A1:X140','utils!A1:D26']:
-            yield self.get_values(file_id,range)
+        viewer_url : str
+            The share url for the viewer document
+        """
+
+        values = [
+            ['="{}"'.format(viewer_url)], # Viewer URL
+            ['="Roster!$A$3:$U$100"'], # Roster Range
+            ['="DrawLookup!$A$3:$H$300"'], # Draw Range
+            [''] # TODO: allow officials imports
+        ]
+
+        value_range_list = [
+            self.generate_value_range_json(
+                range = "utils!B2:B5",
+                values = values
+            )
+        ]
+
+        self.batch_update_value(
+            file_id = self.id,
+            value_range_list = value_range_list,
+            value_input_option = "USER_ENTERED"
+        )
+
+
+        return self

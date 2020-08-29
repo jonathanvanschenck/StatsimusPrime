@@ -162,8 +162,7 @@ class Manager:
             self.env['draw']
         )
 
-        self.ss_service.id = self.env['scoresheets_id']
-        self.ss_service.template_id = self.env['ss_template_id']
+        self.ss_service.id = self.env['ss_template_id']
 
         return self
 
@@ -232,23 +231,46 @@ class Manager:
         return self
 
     def generate_quiz_meet(self):
-        # Step 1: Prepare stats document
-        self.stats_service.set_bracket_weights(self.env['bracket_weights'])\
-            .set_roster(self.env['roster'])\
-            .set_draw(self.env['draw'])\
-            .initialize_schedule()\
-            .initialize_team_summary()\
-            .set_team_parsed()\
-            .set_individual_parsed(self.env['roster'])\
-            .initialized_viewer()
-
-
-
-        # Step 2: copy over viewer document
-
-        # Step 2: upload SS template and modify
+        # # Step 1: Prepare stats document
+        # self.stats_service.set_bracket_weights(self.env['bracket_weights'])\
+        #     .set_roster(self.env['roster'])\
+        #     .set_draw(self.env['draw'])\
+        #     .initialize_schedule()\
+        #     .initialize_team_summary()\
+        #     .set_team_parsed()\
+        #     .set_individual_parsed(self.env['roster'])
+        #
+        # # Step 2: copy over viewer document
+        # self.stats_service.initialize_viewer()\
+        #     .copy_over_draw()\
+        #     .copy_over_roster()#\
+        #     # .copy_over_team_summary()\
+        #     # .copy_over_individual_summary()
+        #
+        # # Step 3: modify the stats template to import data correctly
+        # self.ss_service.initialize_global_variables(
+        #     self.drive_service.get_file_url(self.env['viewer_id'])
+        # )
 
         # Step 3: copy SS template into SS folder
+        for file in self.drive_service.get_all_children(self.env['scoresheets_id']):
+            if file['id'] != self.env['viewer_id']:
+                self.drive_service.move_to_trash(file['id'])
+
+        # TODO: THink this all through more. . . .
+        # scoresheets_metadata = {}
+        # for quiz in self.env['draw'][10:11]:
+        #
+        #     response = self.drive_service.copy_to(
+        #         file_id = self.env['ss_template_id'],
+        #         name = quiz['quiz_num'],
+        #         destination_folder_id = self.env['scoresheets_id'],
+        #         fields = "id, name, webViewLink"
+        #     )
+        #     scoresheets_metadata[response['name']] = {
+        #         "id" : reponse['id'],
+        #         "url" : reponse['webViewLink'],
+        #     }
 
         # Step 4: Update stats document with scoresheet urls
 
