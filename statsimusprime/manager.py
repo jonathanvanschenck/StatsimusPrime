@@ -28,6 +28,7 @@ class Manager:
         credfp = os.path.join(wd,'credentials.json')
         self.ssfp = os.path.join(wd,'templates','Scoresheet_template.xlsx')
         self.statsfp = os.path.join(wd,'templates','Statistics_template.xlsx')
+        self.viewerfp = os.path.join(wd,'templates','Viewer_template.xlsx')
         self.envfp = os.path.join(wd,'.env')
         creds = None
         if os.path.exists(tokenfp):
@@ -63,10 +64,22 @@ class Manager:
         return "<Service Object>"
 
     def initialize_env(self,top_folder_id_or_url):
+        """Initialize the quizzing environment
+
+        This method will first check if an env file exists in the top folder. if
+        if does, it will assume that the folder is already setup correctly and
+        load that environment. Else, it will try to find all the relevent files
+        inside the top folder to build up the environment file from scratch. Any
+        files it doesn't find will be uploaded.
+
+        top_folder_id_or_url : str
+            The url or id of the top folder to be used for a particular meet.
+        """
         top_folder_id = urlparse(top_folder_id_or_url).path.split("/")[-1]
 
-        env = {
+        self.env = {
             'top_folder_id': top_folder_id,
+            'env_id': None,
             'trash_id': None,
             'scoresheets_id': None,
             'stats_id': None,
@@ -78,78 +91,96 @@ class Manager:
         }
 
 
+        # Create the environment file if it doesn't exist (or truncate if it does)
+        with open(self.envfp,"w") as f:
+            f.write("")
+
         # Check if any of the files or folders already exist
         files = self.drive_service.get_all_children(top_folder_id)
         for _f in files:
-            if _f['mimeType'] == 'application/vnd.google-apps.folder':
+            if _f['mimeType'] == 'application/json':
+                if _f['name'] == 'env':
+                    # If the environment is found, download it and load!
+                    print("Found a environment document in Google Drive")
+                    self.env["env_id"] = _f['id']
+                    return self.pull_env().load_env()
+
+            elif _f['mimeType'] == 'application/vnd.google-apps.folder':
                 if _f['name'] == 'trash':
-                    env['trash_id'] = _f['id']
+                    self.env['trash_id'] = _f['id']
                     print("Found a trash folder in Google Drive")
                 elif _f['name'] == 'scoresheets':
-                    env['scoresheets_id'] = _f['id']
+                    self.env['scoresheets_id'] = _f['id']
                     print("Found a scoresheets folder in Google Drive")
             elif _f['mimeType'] == 'application/vnd.google-apps.spreadsheet':
                 if _f['name'] == 'Statistics':
-                    env['stats_id'] = _f['id']
+                    self.env['stats_id'] = _f['id']
                     print("Found a stats document in Google Drive")
                 elif _f['name'] == 'Scoresheet_template':
-                    env['ss_template_id'] = _f['id']
+                    self.env['ss_template_id'] = _f['id']
                     print("Found a scoresheet template in Google Drive")
+                elif _f['name'] == '_Statistics_Viewer':
+                    self.env['viewer_id'] = _f['id']
+                    print("Found a viewer in Google Drive")
 
         # If any don't, create them
-        if env['trash_id'] is None:
-            env['trash_id'] = self.drive_service.create_folder(
+        if self.env['trash_id'] is None:
+            self.env['trash_id'] = self.drive_service.create_folder(
                 name='trash',
                 parent_folder_id = top_folder_id
             ).get('id')
-        if env['scoresheets_id'] is None:
-            env['scoresheets_id'] = self.drive_service.create_folder(
+        if self.env['scoresheets_id'] is None:
+            self.env['scoresheets_id'] = self.drive_service.create_folder(
                 name='scoresheets',
                 parent_folder_id = top_folder_id
             ).get('id')
 
-        if env['stats_id'] is None:
-            env['stats_id'] = self.drive_service.upload_excel_as_sheet(
+        if self.env['stats_id'] is None:
+            self.env['stats_id'] = self.drive_service.upload_excel_as_sheet(
                 name = 'Statistics',
                 file_path = self.statsfp,
                 parent_folder_id = top_folder_id
             ).get('id')
 
-        if env['viewer_id'] is None:
-            env['viewer_id'] = self.drive_service.upload_excel_as_sheet(
+        if self.env['viewer_id'] is None:
+            self.env['viewer_id'] = self.drive_service.upload_excel_as_sheet(
                 name = '_Statistics_Viewer',
-                file_path = self.statsfp,
-                parent_folder_id = env['scoresheets_id']
+                file_path = self.viewerfp,
+                parent_folder_id = self.env['scoresheets_id']
             ).get('id')
 
-        if env['ss_template_id'] is None:
-            env['ss_template_id'] = self.drive_service.upload_excel_as_sheet(
+        if self.env['ss_template_id'] is None:
+            self.env['ss_template_id'] = self.drive_service.upload_excel_as_sheet(
                 name = 'Scoresheet_template',
                 file_path = self.ssfp,
                 parent_folder_id = top_folder_id
             ).get('id')
 
-        # create the .env backup
-        with open(self.envfp, "w") as f:
-            json.dump(env, f, indent=4)
+        if self.env['env_id'] is None:
+            # Initialize the drive side of the env file
+            self.env['env_id'] = self.drive_service.upload_json(
+                name = "env",
+                file_path = self.envfp,
+                parent_folder_id = top_folder_id
+            ).get('id')
 
-        return self.load_env()
+
+        # Create the backup, reload env, then push the backup onto drive
+        return self.save_env().load_env().push_env()
+
 
     def load_env(self):
-        # Load .env file
+        """Loads an `.env` file from the working directory into the Manager
+
+        This includes activating all the gsuite services, and doing some helpful
+        preliminary calculations about the quiz meet (like calculating the number
+        of teams, etc.)
+
+        This method is either called during instantiation, or by `.initialize_env()`
+        if this is the first time the manager is being run for a particular meet
+        """
         with open(self.envfp) as f:
-            env = json.load(f)
-
-        # self.top_folder_id = env['top_folder_id']#f.readline().strip().split("=")[1]
-        # self.trash_id = env['trash_id']#f.readline().strip().split("=")[1]
-        # self.scoresheets_id = env['scoresheets_id']#f.readline().strip().split("=")[1]
-        # self.stats_id = env['stats_id']#f.readline().strip().split("=")[1]
-        # self.ss_template_id = env['ss_template_id']#f.readline().strip().split("=")[1]
-        # self.team_list = env['team_list']
-        # self.roster = env['roster']
-        # self.officals = env['officials']
-
-        self.env = env
+            self.env = json.load(f)
 
         # Activate drive and sheets services
         self.drive_service.id = self.env['top_folder_id']
@@ -167,11 +198,37 @@ class Manager:
         return self
 
     def save_env(self):
-
-        #env = {key:self.__getattribute__(key) for key in []}
-
+        """This saves the current environment as `.env` in the current working directory
+        """
         with open(self.envfp, "w") as f:
             json.dump(self.env, f, indent=4)
+
+        return self
+
+    def push_env(self):
+        """This pushes the local `.env` file on the cloud
+        """
+        self.drive_service.update_json(
+            file_id = self.env['env_id'],
+            file_path = self.envfp
+        )
+        return self
+
+    def pull_env(self):
+        """This pulls down the `env` file from the cloud in the current working directory
+
+        NOTE: this method only modifies the `.env` file saved locally on your
+        harddrive, and does NOT update the `.env` object which is referenced by
+        the manager for most other methods. You must call `.load_env()` after
+        this method if you want to the manager to update its internal environment
+        variable -- which you probably do if you are planning to use the Manager
+        for anything else.
+        """
+        self.drive_service.download_json(
+            file_id = self.env['env_id'],
+            destination_file_path = self.envfp
+        )
+        return self
 
     def download_static_image(self,fp=None):
         _fp = fp or os.getcwd()
@@ -230,48 +287,65 @@ class Manager:
 
         return self
 
-    def generate_quiz_meet(self):
-        # # Step 1: Prepare stats document
-        # self.stats_service.set_bracket_weights(self.env['bracket_weights'])\
-        #     .set_roster(self.env['roster'])\
-        #     .set_draw(self.env['draw'])\
-        #     .initialize_schedule()\
-        #     .initialize_team_summary()\
-        #     .set_team_parsed()\
-        #     .set_individual_parsed(self.env['roster'])
-        #
-        # # Step 2: copy over viewer document
-        # self.stats_service.initialize_viewer()\
-        #     .copy_over_draw()\
-        #     .copy_over_roster()#\
-        #     # .copy_over_team_summary()\
-        #     # .copy_over_individual_summary()
-        #
-        # # Step 3: modify the stats template to import data correctly
-        # self.ss_service.initialize_global_variables(
-        #     self.drive_service.get_file_url(self.env['viewer_id'])
-        # )
+    def generate_scoresheets(self, verbose = True):
+        """Makes a copy of the ss_template for each quiz in the environment
+        """
 
-        # Step 3: copy SS template into SS folder
+        # Remove everything from the scoresheets folder which is not the viewer
         for file in self.drive_service.get_all_children(self.env['scoresheets_id']):
             if file['id'] != self.env['viewer_id']:
                 self.drive_service.move_to_trash(file['id'])
 
-        # TODO: THink this all through more. . . .
-        # scoresheets_metadata = {}
-        # for quiz in self.env['draw'][10:11]:
-        #
-        #     response = self.drive_service.copy_to(
-        #         file_id = self.env['ss_template_id'],
-        #         name = quiz['quiz_num'],
-        #         destination_folder_id = self.env['scoresheets_id'],
-        #         fields = "id, name, webViewLink"
-        #     )
-        #     scoresheets_metadata[response['name']] = {
-        #         "id" : reponse['id'],
-        #         "url" : reponse['webViewLink'],
-        #     }
+        # Generate all the scoresheets and save their urls into the environment
+        for i in range(len(self.env['draw'])):
+            quiz_num = self.env['draw'][i]['quiz_num']
+            if verbose:
+                print('Generating quiz {}'.format(quiz_num))
 
-        # Step 4: Update stats document with scoresheet urls
+            response = self.drive_service.copy_to(
+                file_id = self.env['ss_template_id'],
+                name = quiz_num,
+                destination_folder_id = self.env['scoresheets_id'],
+                fields = "id, webViewLink"
+            )
+
+            self.ss_service.set_quiz_number_for(
+                file_id = response.get('id'),
+                quiz_num = quiz_num
+            )
+
+            self.env['draw'][i]['url'] = reponse.get('webViewLink')
+
+
+        # Add urls into stats document
+        self.stats_service.update_ss_urls(self.env['draw'])
+
+        # Backup the enviroment
+        return self.save_env().push_env()
+
+    def generate_quiz_meet(self):
+        # Step 1: Prepare stats document
+        self.stats_service.set_bracket_weights(self.env['bracket_weights'])\
+            .set_roster(self.env['roster'])\
+            .set_draw(self.env['draw'])\
+            .initialize_schedule()\
+            .initialize_team_summary()\
+            .set_team_parsed()\
+            .set_individual_parsed(self.env['roster'])
+
+        # Step 2: copy over viewer document
+        self.stats_service.initialize_viewer()\
+            .copy_over_draw()\
+            .copy_over_roster()#\
+            # .copy_over_team_summary()\
+            # .copy_over_individual_summary()
+
+        # Step 3: modify the stats template to import data correctly
+        self.ss_service.initialize_global_variables(
+            self.drive_service.get_file_url(self.env['viewer_id'])
+        )
+
+        # Step 4: generate the score sheets
+        self.generate_scoresheets()
 
         return self

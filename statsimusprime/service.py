@@ -134,6 +134,66 @@ class DriveService(Service):
         return self
 
 
+    def upload_json(self,name,file_path,parent_folder_id=None):
+        """Uploads a new json file into the drive
+        """
+        pfid = parent_folder_id or ""
+
+        file_metadata = {
+            'name': name,
+            'mimeType': 'application/json',
+            'parents': [pfid]
+        }
+
+        media = MediaFileUpload(
+            file_path,
+            mimetype='application/json',
+            resumable=True
+        )
+
+        return self.service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields = "id"
+        ).execute()
+
+
+    def update_json(self,file_id,file_path):
+        """Updates an existing json file in the drive
+        """
+        pfid = parent_folder_id or ""
+
+        media = MediaFileUpload(
+            file_path,
+            mimetype='application/json',
+            resumable=True
+        )
+
+        self.service.files().update(
+            fileId = file_id,
+            media_body = media
+        ).execute()
+
+        return self
+
+    def download_json(self, file_id, destination_file_path, verbose = False):
+        """Downloads a json file
+        """
+        request = self.service.files().export_media(
+            fileId = file_id,
+            mimeType='application/json'
+        )
+        with open(destination_file_path,"wb") as f:
+            downloader = MediaIoBaseDownload(f, request)
+            done = False
+            while done is False:
+                status, done = downloader.next_chunk()
+                if verbose:
+                    print("Download %d%%." % int(status.progress() * 100))
+
+        return self
+
+
     def copy_to(self, file_id, name, destination_folder_id, fields = "id"):
         return self.service.files().copy(
             fileId = file_id,
@@ -1451,6 +1511,36 @@ class StatsService(SheetsService):
 
         return self
 
+    # def remove_ss_urls(self):
+    #     """Remove url references to scoresheets from DrawLookup
+    #     """
+    #     self.batch_clear_value(
+    #         file_id = self.viewer_id,
+    #         range_list = ["DrawLookup!J3:J"+str(3+self.meet_params['total_quizzes'])]
+    #     )
+    #     return self
+
+    def update_ss_urls(self,draw_json):
+        """Updates the url references to scoresheets in DrawLookup
+        """
+
+        values = [['="{}"'.format(quiz['url'])] for quiz in draw_json]
+
+        value_range_list = [
+            self.generate_value_range_json(
+                range = "DrawLookup!J3:J"+str(3+self.meet_params['total_quizzes']-1),
+                values = values
+            )
+        ]
+
+        self.batch_update_value(
+            file_id = self.id,
+            value_range_list = value_range_list,
+            value_input_option = "USER_ENTERED"
+        )
+
+        return self
+
 class ScoresheetService(SheetsService):
     def __repr__(self):
         return "<DriveService Object>"
@@ -1482,5 +1572,30 @@ class ScoresheetService(SheetsService):
             value_input_option = "USER_ENTERED"
         )
 
+
+        return self
+
+    def set_quiz_number_for(self, file_id, quiz_num):
+        """Sets the quiz number for a copy of the template
+
+        file_id : str
+            The id of the template copy to have its quiz number set
+
+        quiz_num : str
+            The number of the quiz
+        """
+
+        value_range_list = [
+            self.generate_value_range_json(
+                range = "metadata!B16:B16",
+                values = [[quiz_num]]
+            )
+        ]
+
+        self.batch_update_value(
+            file_id = file_id,
+            value_range_list = value_range_list,
+            value_input_option = "USER_ENTERED"
+        )
 
         return self
