@@ -84,6 +84,7 @@ class Manager:
             'scoresheets_id': None,
             'stats_id': None,
             'ss_template_id': None,
+            'viewer_id': None,
             'roster': [],
             'draw': [],
             'officials': [],
@@ -93,7 +94,7 @@ class Manager:
 
         # Create the environment file if it doesn't exist (or truncate if it does)
         with open(self.envfp,"w") as f:
-            f.write("")
+            f.write("{}")
 
         # Check if any of the files or folders already exist
         files = self.drive_service.get_all_children(top_folder_id)
@@ -119,9 +120,9 @@ class Manager:
                 elif _f['name'] == 'Scoresheet_template':
                     self.env['ss_template_id'] = _f['id']
                     print("Found a scoresheet template in Google Drive")
-                elif _f['name'] == '_Statistics_Viewer':
-                    self.env['viewer_id'] = _f['id']
-                    print("Found a viewer in Google Drive")
+                # elif _f['name'] == '_Statistics_Viewer':
+                #     self.env['viewer_id'] = _f['id']
+                #     print("Found a viewer in Google Drive")
 
         # If any don't, create them
         if self.env['trash_id'] is None:
@@ -130,10 +131,21 @@ class Manager:
                 parent_folder_id = top_folder_id
             ).get('id')
         if self.env['scoresheets_id'] is None:
+            # Create the non-existent scoresheets folder
             self.env['scoresheets_id'] = self.drive_service.create_folder(
                 name='scoresheets',
                 parent_folder_id = top_folder_id
             ).get('id')
+            # Add viewer priviledges
+            self.drive_service.publish_file(self.env['scoresheets_id'])
+        else:
+            # Else, crawl the existent scoresheet folder to look for the stats viewer
+            files = self.drive_service.get_all_children(self.env['scoresheets_id'])
+            for _f in files:
+                if _f['mimeType'] == 'application/vnd.google-apps.spreadsheet':
+                    if _f['name'] == '_Statistics_Viewer':
+                        self.env['viewer_id'] = _f['id']
+                        print("Found a viewer in Google Drive")
 
         if self.env['stats_id'] is None:
             self.env['stats_id'] = self.drive_service.upload_excel_as_sheet(
@@ -230,6 +242,82 @@ class Manager:
         )
         return self
 
+    def load_roster(self, file_path):
+        """Loads a roster json file into the manager env object
+
+        Note, this method does not update either the local `.env` file, or
+        the `env` file in the cloud. Must call `.save_env().push_env()` to do so.
+
+        JSON format should be a list of quizzer json objects:
+            {
+                "id": "0024",         # must be unique and consistent between meets
+                "team": "ABC1",
+                "bib": "1",           # must be 1-5
+                "name": "John Doe",   # Private value, not publish publically
+                "moniker": "John D.", # Published publically
+                "is_rookie": "F",     # must be "T"/"F"
+                "is_cap": "T",        # must be "T"/"F"
+                "is_cc": "F"          # must be "T"/"F"
+            }
+
+        Parameters
+        ----------
+        file_path : str
+            Path the the roster json file
+        """
+        with open(file_path) as f:
+            self.env['roster'] = json.load(f)
+
+        return self
+
+    def load_draw(self, file_path):
+        """Loads a draw json file into the manager env object
+
+        Note, this method does not update either the local `.env` file, or
+        the `env` file in the cloud. Must call `.save_env().push_env()` to do so.
+
+        JSON format should be a list of quiz json objects:
+            {
+                "quiz_num": "1",            # The quiz number/name
+                "slot_num": "1",            # Slot number (must be integer >= 1)
+                "room_num": "1",            # Room number (must be integer >= 1)
+                "slot_time": "Friday 8:00", # Project time of quiz
+                "team1": "ABC3",            # See note below
+                "team2": "DEF1",            # See note below
+                "team3": "DEF5",            # See note below
+                "url": "",                  # Leave blank
+                "type": "P"                 # Specifies type of quiz, must be
+                                            #  P(relim),S(emi finals),(con) A,(con) B
+            }
+
+        Note: the `team1` of the quiz json object must take be one of three forms:
+            1) If the quiz is a prelim quiz, the team must be a valid team identifier
+                which correspondes to one of the teams in the `roster` object.
+
+            2) If the quiz is a Semi finals/Consolations quiz, it CAN take the
+                form: `P_i` where i is an integer from 1 to the total number of
+                teams. This indicates that which ever team places in ith place
+                after prelims will quiz in this place: e.g. `P_3` indicates that
+                the 3rd placed team after prelims will quiz here.
+
+            3) If the quiz is a Semi finals/Consolations quiz, it CAN take the
+                form: `{quiz_num}_i` where `{quiz_num}` is the number/name of a
+                previous quiz (provided the quiz isn't called `P` becuase that
+                will break everything, just rename it) and `i` is 1, 2 or 3
+                indicating a placement in that quiz. For example: `A_3` means
+                that whoever took 3rd in quiz A will quiz here. Or `B3_1` means
+                whoever took first in quiz B3 will quiz here.
+
+        Parameters
+        ----------
+        file_path : str
+            Path the the draw json file
+        """
+        with open(file_path) as f:
+            self.env['draw'] = json.load(f)
+
+        return self
+
     def download_static_image(self,fp=None):
         _fp = fp or os.getcwd()
 
@@ -314,7 +402,7 @@ class Manager:
                 quiz_num = quiz_num
             )
 
-            self.env['draw'][i]['url'] = reponse.get('webViewLink')
+            self.env['draw'][i]['url'] = response.get('webViewLink')
 
 
         # Add urls into stats document
@@ -325,13 +413,16 @@ class Manager:
 
     def generate_quiz_meet(self):
         # Step 1: Prepare stats document
-        self.stats_service.set_bracket_weights(self.env['bracket_weights'])\
-            .set_roster(self.env['roster'])\
-            .set_draw(self.env['draw'])\
-            .initialize_schedule()\
-            .initialize_team_summary()\
-            .set_team_parsed()\
-            .set_individual_parsed(self.env['roster'])
+        self.stats_service.retrieve_meet_parameters(
+            self.env['roster'],
+            self.env['draw']
+        ).set_bracket_weights(self.env['bracket_weights'])\
+         .set_roster(self.env['roster'])\
+         .set_draw(self.env['draw'])\
+         .initialize_schedule()\
+         .initialize_team_summary()\
+         .set_team_parsed()\
+         .set_individual_parsed(self.env['roster'])
 
         # Step 2: copy over viewer document
         self.stats_service.initialize_viewer()\

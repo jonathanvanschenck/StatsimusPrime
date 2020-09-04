@@ -12,12 +12,10 @@ Then dump it into the StatsimusPrime folder here.
 ```
 
 # To Do
- - [ ] Add permissions support
- - [ ] fix Statistics_template
+ - [ ] Add permissions support (officials)
  - [ ] Add cli support
  - [ ] Add meet-to-meet YTD support
- - [x] handle time outs?
  - [ ] handle substitutions?
- - [x] Add draw creation support
- - [ ] Add bracket creation support too
- - [x] Add static backup support
+ - [ ] Add draw creation support
+ - [ ] fix static backup support
+ - [ ] Add bracket update support

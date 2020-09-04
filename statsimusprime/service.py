@@ -49,14 +49,15 @@ class DriveService(Service):
             response = self.service.files().list(
                 q="'{}' in parents".format(folder_id),
                 spaces='drive',
-                fields='nextPageToken, files(id, name, mimeType)',
+                fields='nextPageToken, files(id, name, mimeType, parents)',
                 pageToken=page_token
             ).execute()
             for file in response.get('files', []):
                 children.append({
                     'name':file.get('name'),
                     'id':file.get('id'),
-                    'mimeType':file.get('mimeType')
+                    'mimeType':file.get('mimeType'),
+                    'parents':file.get('parents')
                 })
             page_token = response.get('nextPageToken', None)
             if page_token is None:
@@ -158,11 +159,9 @@ class DriveService(Service):
         ).execute()
 
 
-    def update_json(self,file_id,file_path):
+    def update_json(self, file_id, file_path):
         """Updates an existing json file in the drive
         """
-        pfid = parent_folder_id or ""
-
         media = MediaFileUpload(
             file_path,
             mimetype='application/json',
@@ -179,9 +178,12 @@ class DriveService(Service):
     def download_json(self, file_id, destination_file_path, verbose = False):
         """Downloads a json file
         """
-        request = self.service.files().export_media(
-            fileId = file_id,
-            mimeType='application/json'
+        # request = self.service.files().export_media(
+        #     fileId = file_id,
+        #     mimeType='application/json'
+        # )
+        request = self.service.files().get_media(
+            fileId = file_id
         )
         with open(destination_file_path,"wb") as f:
             downloader = MediaIoBaseDownload(f, request)
@@ -210,6 +212,17 @@ class DriveService(Service):
             fileId = file_id,
             fields = "webViewLink"
         ).execute().get("webViewLink")
+
+    def publish_file(self, file_id):
+        """Add a 'anyoneWithLinkCanView' permission to the file
+        """
+        return self.service.permissions().create(
+            fileId = file_id,
+            body = {
+                "role": "reader",
+                "type": "anyone"
+            }
+        ).execute()
 
 
 
@@ -651,10 +664,21 @@ class StatsService(SheetsService):
         self.meet_params = {}
         self.meet_params['total_teams'] = len(set([quizzer['team'] for quizzer in roster_json]))
         self.meet_params['total_quizzes'] = len(draw_json)
-        self.meet_params['prelims_per_team_number'] = 3 * sum([quiz['type'] == "P" for quiz in draw_json]) // self.meet_params['total_teams']
+        try:
+            self.meet_params['prelims_per_team_number'] = 3 * sum([quiz['type'] == "P" for quiz in draw_json]) // self.meet_params['total_teams']
+        except ZeroDivisionError:
+            self.meet_params['prelims_per_team_number'] = 0
         self.meet_params['total_quizzers'] = len(roster_json)
-        self.meet_params['total_quiz_slots'] = max([int(quiz['slot_num']) for quiz in draw_json])
-        self.meet_params['total_rooms'] = max([int(quiz['room_num']) for quiz in draw_json])
+        try:
+            self.meet_params['total_quiz_slots'] = max([int(quiz['slot_num']) for quiz in draw_json])
+        except ValueError:
+            self.meet_params['total_quiz_slots'] = 0
+        try:
+            self.meet_params['total_rooms'] = max([int(quiz['room_num']) for quiz in draw_json])
+        except ValueError:
+            self.meet_params['total_rooms'] = 0
+
+        return self
 
     # def generate_all_values(self):
     #     for sheet in ['DRAW','IND']:
@@ -1543,7 +1567,7 @@ class StatsService(SheetsService):
 
 class ScoresheetService(SheetsService):
     def __repr__(self):
-        return "<DriveService Object>"
+        return "<ScoresheetService Object>"
 
     def initialize_global_variables(self, viewer_url):
         """Initializes the global variables for the scoresheet template
