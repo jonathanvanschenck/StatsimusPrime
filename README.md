@@ -1,6 +1,9 @@
 # StatsimusPrime
 Automated System for generating Quiz Meet Stats
 
+# Operation
+TODO
+
 # Development
 Get a `credentials.json` file: [see here](https://developers.google.com/docs/api/quickstart/python).
 Then dump it into the StatsimusPrime folder here.
@@ -15,7 +18,8 @@ Then dump it into the StatsimusPrime folder here.
  - [ ] Add permissions support (officials)
  - [ ] Add cli support
  - [ ] Add meet-to-meet YTD support
- - [ ] handle substitutions?
  - [ ] Add draw creation support
  - [ ] fix static backup support
- - [ ] Add bracket update support
+ - [x] Add bracket update support
+ - [ ] Add post semis team ranking support
+ - [ ] fix "copy over" no blanks problem

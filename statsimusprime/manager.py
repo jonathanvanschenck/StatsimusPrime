@@ -3,6 +3,7 @@
 import pickle
 import os
 import json
+from time import sleep
 
 
 from urllib.parse import urlparse
@@ -248,6 +249,11 @@ class Manager:
         Note, this method does not update either the local `.env` file, or
         the `env` file in the cloud. Must call `.save_env().push_env()` to do so.
 
+        Further, if you have previously called `.generate_quiz_meet()` and have
+        since changed the roster (say, by adding a new quizzer) you will also need
+        to reconfigure the roster in the stats and viewer documents by calling
+        `.push_roster()`
+
         JSON format should be a list of quizzer json objects:
             {
                 "id": "0024",         # must be unique and consistent between meets
@@ -438,5 +444,38 @@ class Manager:
 
         # Step 4: generate the score sheets
         self.generate_scoresheets()
+
+        return self
+
+    def push_roster(self):
+        """Republishes the roster in the stats and viewer documents
+
+        Note, this should only be called after `.generate_quiz_meet()` IF the
+        roster has been changed using `.load_roster(...)` i.e. becuase of a late
+        added or droped quizzer. 
+        """
+        self.stats_service.retrieve_meet_parameters(
+            self.env['roster'],
+            self.env['draw']
+        ).set_roster(self.env['roster'])\
+         .set_individual_parsed(self.env['roster'])\
+         .copy_over_roster()
+        return self
+
+    def update_brackets_every(self, seconds = 60, ds = 5):
+        print("Updating Brackets every {} seconds".format(seconds))
+        try:
+            while True:
+                for i in range(seconds//ds):
+                    print("\rNext Update in: {} seconds         ".format(seconds-i*ds),end="")
+                    sleep(ds)
+                self.stats_service.copy_over_draw()
+                print("\rUpdated"+20*" ")
+        except KeyboardInterrupt:
+            print("\rEnding Updates"+20*" ")
+
+        return self
+
+    def publish_quiz_meet(self):
 
         return self

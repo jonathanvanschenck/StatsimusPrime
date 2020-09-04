@@ -1413,7 +1413,7 @@ class StatsService(SheetsService):
         return self
 
     def copy_over_roster(self):
-        """Copies the DrawLookup tab from stats to viewer
+        """Copies the Roster tab from stats to viewer
         """
 
         str_temp = "Roster!{}:{}"
