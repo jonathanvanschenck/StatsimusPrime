@@ -646,7 +646,8 @@ quiz_to_teams = {
     "G": {"team1":"D_2","team2":"D_3","team3":"E_1"},
     "H": {"team1":"E_2","team2":"E_3","team3":"F_1"},
     "I": {"team1":"G_2","team2":"G_3","team3":"H_1"},
-    "J": {"team1":"D_1","team2":"G_1","team3":"I_1"}
+    "J": {"team1":"D_1","team2":"G_1","team3":"I_1"},
+    "K": {"team1":"P_1","team2":"P_2","team3":"P_3"}
 }
 def get_teams(quiz_name, bracket_offset):
     """Get the json for teams
@@ -718,6 +719,10 @@ bracket_types = {
         "H": [5,3],
         "I": [6,2],
         "J": [7,2],
+    },
+    "none" : {},
+    "finals_only" : {
+        "K": [1,1]
     }
 }
 
@@ -778,7 +783,33 @@ def generate_bracket_json(bracket_style, slot_offset, num_brackets = 1, finals_r
                         }
                         quiz.update(get_teams(quiz_name, bracket_offset))
                         quizzes.append(quiz)
-
+    if bracket_style == "finals_only":
+        bracket = bracket_types['finals_only']
+        for bracket_offset in range(num_brackets):
+            finals_repeat = finals_repeats[bracket_offset]
+            for i in range(int(finals_repeat==1)):
+                quiz_name = "K"
+                si,ri = bracket[quiz_name]
+                quiz = {
+                    "quiz_num": quiz_name + ["","1","2"][bracket_offset],
+                    "slot_num": str(slot_offset+si),
+                    "room_num": str(ri + 3*bracket_offset),
+                    "type": "SABC"[bracket_offset]
+                }
+                quiz.update(get_teams(quiz_name, bracket_offset))
+                quizzes.append(quiz)
+            if finals_repeat > 1:
+                for i in range(finals_repeat):
+                        quiz_name = "K"
+                        si,ri = bracket[quiz_name]
+                        quiz = {
+                            "quiz_num": quiz_name + ["","1","2"][bracket_offset] + "({})".format(i+1),
+                            "slot_num": str(slot_offset+si+i),
+                            "room_num": str(ri + 3*bracket_offset),
+                            "type": "SABC"[bracket_offset]
+                        }
+                        quiz.update(get_teams(quiz_name, bracket_offset))
+                        quizzes.append(quiz)
     return quizzes
 
 def generate_semis_json(nTeams, slot_offset, finals_repeats = [1,1,1], bracket_style = 'condensed'):
@@ -790,7 +821,7 @@ def generate_semis_json(nTeams, slot_offset, finals_repeats = [1,1,1], bracket_s
     )
     NT = nTeams % 9
     room_num = max([int(q['room_num']) for q in quizzes])+1
-    max_slot = max([int(q['slot_num']) for q in quizzes if not "J" in q['quiz_num']])+1
+    max_slot = max([0]+[int(q['slot_num']) for q in quizzes if not "J" in q['quiz_num']])+1
     QpT = 3#*((max_slot - slot_offset) // NT)
     if NT >= 3:
         quizzes += RoundRobin(

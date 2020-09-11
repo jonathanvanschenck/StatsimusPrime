@@ -316,7 +316,7 @@ class Manager:
                     or happen to have 6/9 rooms -- unlikely. "condensed" specifies
                     that each bracket will use 2 rooms (though, they can share
                     the second room with another bracket, so 2 brackets can fit
-                    in only 3 rooms total).
+                    in only 3 rooms total). "finals_only" only add a "J" quiz
 
                 num_rooms : int : default = 4
                     The number of rooms available at the quiz meet.
@@ -341,12 +341,12 @@ class Manager:
 
         finals_repeats = draw_params.pop("finals_repeats", [1,1,1])
         bracket_style = draw_params.pop("bracket_style", 'condensed')
-        assert bracket_style in ['full', 'condensed'], "Only valid bracket styles are: `full` and `condensed`"
+        assert bracket_style in ['full', 'condensed', 'finals_only'], "Only valid bracket styles are: `full` and `condensed`"
         num_rooms = draw_params.pop("num_rooms", 4)
         QpT = draw_params.pop("QpT", 6)
         num_blanks = draw_params.pop("num_blanks", None)
         skip_round_robin = draw_params.pop("skip_round_robin", True)
-        
+
         # Document me!
         annealing_steps = draw_params.pop("annealing_steps", 10**4)
         slots_on_friday = draw_params.pop("slots_on_friday", 8)
@@ -431,7 +431,7 @@ class Manager:
             print("Printing Draw . . . ")
             num_slots = max([int(q['slot_num']) for q in quizzes])
             num_rooms = max([int(q['room_num']) for q in quizzes])
-            draw = [[(17+int(r==0)*12)*" " for r in range(num_rooms)] for s in range(num_slots)]
+            draw = [[(17+int(r==0)*(12+3))*" " for r in range(num_rooms)] for s in range(num_slots)]
             for q in quizzes:
                 if q['room_num'] == "1":
                     ll = "{: >12} | {: >2};{: >4},{: >4},{: >4}".format(
