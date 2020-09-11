@@ -27,6 +27,10 @@ class Quiz:
         # True when there are 3 teams in a quiz
         return len(self) == 3
 
+    @property
+    def empty(self):
+        return len(self) == 0
+
     def __repr__(self):
         return "<"+self.s+(3-len(self.s))*"_"+">"
     def __str__(self):
@@ -46,7 +50,7 @@ class Quiz:
         self.s = self.s[:i]+self.s[i+1:]
         return v
 
-class Draw:
+class Prelims:
     """Base class to create the draw for prelims
 
     The program creates an initial guess for the draw and then tries to optimize
@@ -84,7 +88,7 @@ class Draw:
     >>> QpT = 7 # number of quizzes per team
     >>> R = 6 # number of rooms
     >>> breaklocation = 0.5 # location of the day break
-    >>> d = Draw(T,QpT,R,breaklocation)
+    >>> d = Prelims(T,QpT,R,breaklocation)
     >>> d.initialize() # Create an initial (bad) draw
     >>> print("Thermalizing") # Randomize
     >>> d.thermalize(10**4, kT = 0.1, alpha = 0.2, verbose=True)
@@ -98,7 +102,7 @@ class Draw:
     >>> QpT = 7 # number of quizzes per team
     >>> R = 6 # number of rooms
     >>> breaklocation = 0.5 # location of the day break
-    >>> d = Draw(T,QpT,R,breaklocation)
+    >>> d = Prelims(T,QpT,R,breaklocation)
     >>> d.initialize() # Create an initial (bad) draw
     >>> print("Annealing") # Randomize
     >>> d.anneal(10**5, verbose=True)
@@ -394,7 +398,7 @@ class Draw:
                 j += 1
                 if verbose:
                     print("{: >3}% : kT = {: >1.3f} : E = {:.1f} : E/T = {:.2f} : E/Q = {:.3f}".format(5*j, kT,self.E,self.E/self.T,self.E/(3*self.Q)))
-
+        return self
 
     def get_stats(self,verbose=False):
         """Generate statistics on the draw
@@ -543,6 +547,261 @@ class Draw:
 
         return new_cls
 
+    def generate_json(self, team_list):
+        """Create a json object representing the draw
+
+        Parameters
+        ----------
+        team_list : list
+            List of the names of each team, must match the length of the number
+            of teams provided at instantiation, or bad things will happen.
+
+        returns : obj = [
+            ...,
+            {
+                quiz_num: "2", # 1 indexed
+                slot_num: "1", # 1 indexed
+                room_num: "2", # 1 indexed
+                team1: "",     # Team name
+                team2: "",     # Team name
+                team3: "",     # Team name
+                type: "P"      # Prelim type quiz
+            },
+            ...
+        ]
+        """
+        swaplist = {char:team for char,team in zip(self.Tlist,team_list)}
+        swaplist[""] = ""
+        quizzes = []
+        qi = 0
+        for si, s in enumerate(self.draw):
+            for ri, q in enumerate(s):
+                if not q.empty:
+                    qi += 1
+                    quiz = {
+                        "quiz_num": str(qi),
+                        "slot_num": str(si+1),
+                        "room_num": str(ri+1),
+                        "type": "P"
+                    }
+                    for i in range(3):
+                        quiz["team{}".format(i+1)] = swaplist[q.s[i]]
+                    quizzes.append(quiz)
+
+        return quizzes
+
+
+class RoundRobin(Prelims):
+    def __init__(self, nTeams, QpT = 3):#, nSlots, extraSlots):
+        nRooms = 1
+
+        # numblanks = (nRooms * nSlots) - (nTeams * QpT // 3 - extraSlots)
+        Prelims.__init__(self, nTeams, QpT, nRooms)#, numblanks = numblanks)
+
+    def generate_json(self, room_num, offset_bracket, offset_slot):
+        """Generate the json representation
+
+        Parameters
+        ----------
+        room_num : int or string
+            The (1 indexed) number of the room where the quizzes will take place
+
+        offset_bracket : int (1 or 2)
+            An integer representing the offset for the bracket: either 1 for A or
+            2 for B.
+
+        offset_slot : int
+            The slot number of the last prelim.
+        """
+        team_list = ["P_{}".format(9*offset_bracket+1+i) for i in range(len(self.Tlist))]
+        swaplist = {char:team for char,team in zip(self.Tlist,team_list)}
+        swaplist[""] = ""
+        quizzes = []
+        qi = 0
+        for si, s in enumerate(self.draw):
+            for ri, q in enumerate(s):
+                if not q.empty:
+                    qi += 1
+                    quiz = {
+                        "quiz_num": "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[qi-1] + str(offset_bracket),
+                        "slot_num": str(offset_slot+si+1),
+                        "room_num": str(room_num),
+                        "type": "ABC"[offset_bracket-1]
+                    }
+                    for i in range(3):
+                        quiz["team{}".format(i+1)] = swaplist[q.s[i]]
+                    quizzes.append(quiz)
+
+        return quizzes
+
+
+
+quiz_to_teams = {
+    "A": {"team1":"P_1","team2":"P_4","team3":"P_7"},
+    "B": {"team1":"P_2","team2":"P_5","team3":"P_8"},
+    "C": {"team1":"P_3","team2":"P_6","team3":"P_9"},
+    "D": {"team1":"A_1","team2":"B_1","team3":"C_1"},
+    "E": {"team1":"A_2","team2":"B_2","team3":"B_2"},
+    "F": {"team1":"A_3","team2":"B_3","team3":"C_3"},
+    "G": {"team1":"D_2","team2":"D_3","team3":"E_1"},
+    "H": {"team1":"E_2","team2":"E_3","team3":"F_1"},
+    "I": {"team1":"G_2","team2":"G_3","team3":"H_1"},
+    "J": {"team1":"D_1","team2":"G_1","team3":"I_1"}
+}
+def get_teams(quiz_name, bracket_offset):
+    """Get the json for teams
+
+    Parameters
+    ----------
+    quiz_name : str
+        The name of the quiz: A, B, ...
+
+    bracket_offset : int
+        The offset for the bracket: 0 for semis, 1 for A, 2 for B
+    """
+    teams = quiz_to_teams[quiz_name].copy()
+    if bracket_offset > 0:
+        for k in teams.keys():
+            if teams[k].split("_")[0].lower() != "p":
+                teams[k] = teams[k].split("_")[0]+str(bracket_offset)+"_"+teams[k].split("_")[1]
+            else:
+                teams[k] = teams[k].split("_")[0]+"_"+str(int(teams[k].split("_")[1])+9*bracket_offset)
+    return teams
+
+
+bracket_types = {
+    "full" : {
+             #slot offset, room_num
+        "A": [1,1],
+        "B": [1,2],
+        "C": [1,3],
+        "D": [2,1],
+        "E": [2,2],
+        "F": [2,3],
+        "G": [3,1],
+        "H": [3,2],
+        "I": [4,1],
+        "J": [5,1],
+    },
+    "condensed" : {
+        "A": [1,1],
+        "B": [1,2],
+        "C": [2,1],
+        "D": [3,1],
+        "E": [3,2],
+        "F": [4,1],
+        "G": [5,1],
+        "H": [5,2],
+        "I": [6,1],
+        "J": [7,1],
+    },
+    "condensed_left" : {
+        "A": [1,1],
+        "B": [1,2],
+        "C": [2,1],
+        "D": [3,1],
+        "E": [3,2],
+        "F": [4,1],
+        "G": [5,1],
+        "H": [6,1],
+        "I": [7,1],
+        "J": [8,1],
+    },
+    "condensed_right" : {
+        "A": [1,3],
+        "B": [2,2],
+        "C": [2,3],
+        "D": [3,3],
+        "E": [4,2],
+        "F": [4,3],
+        "G": [5,2],
+        "H": [5,3],
+        "I": [6,2],
+        "J": [7,2],
+    }
+}
+
+def generate_bracket_json(bracket_style, slot_offset, num_brackets = 1, finals_repeats = [1,1,1]):
+    quizzes = []
+    if bracket_style == "full":
+        bracket = bracket_types['full']
+        for bracket_offset in range(num_brackets):
+            finals_repeat = finals_repeats[bracket_offset]
+            for i in range(9+int(finals_repeat==1)):
+                quiz_name = "ABCDEFGHIJ"[i]
+                si,ri = bracket[quiz_name]
+                quiz = {
+                    "quiz_num": quiz_name + ["","1","2"][bracket_offset],
+                    "slot_num": str(slot_offset+si),
+                    "room_num": str(ri + 3*bracket_offset),
+                    "type": "SABC"[bracket_offset]
+                }
+                quiz.update(get_teams(quiz_name, bracket_offset))
+                quizzes.append(quiz)
+            if finals_repeat > 1:
+                for i in range(finals_repeat):
+                        quiz_name = "J"
+                        si,ri = bracket[quiz_name]
+                        quiz = {
+                            "quiz_num": quiz_name + ["","1","2"][bracket_offset] + "({})".format(i+1),
+                            "slot_num": str(slot_offset+si+i),
+                            "room_num": str(ri + 3*bracket_offset),
+                            "type": "SABC"[bracket_offset]
+                        }
+                        quiz.update(get_teams(quiz_name, bracket_offset))
+                        quizzes.append(quiz)
+    elif bracket_style == "condensed":
+        for bracket_offset in range(num_brackets):
+            bt = ['condensed_left','condensed_right','condensed'][bracket_offset%2 + int(((bracket_offset + 1) == num_brackets) and (num_brackets%2 == 1))]
+            bracket = bracket_types[bt]
+            finals_repeat = finals_repeats[bracket_offset]
+            for i in range(9+int(finals_repeat==1)):
+                quiz_name = "ABCDEFGHIJ"[i]
+                si,ri = bracket[quiz_name]
+                quiz = {
+                    "quiz_num": quiz_name + ["","1","2"][bracket_offset],
+                    "slot_num": str(slot_offset+si),
+                    "room_num": str(ri + 3*(bracket_offset//2)),
+                    "type": "SABC"[bracket_offset]
+                }
+                quiz.update(get_teams(quiz_name, bracket_offset))
+                quizzes.append(quiz)
+            if finals_repeat > 1:
+                for i in range(finals_repeat):
+                        quiz_name = "J"
+                        si,ri = bracket[quiz_name]
+                        quiz = {
+                            "quiz_num": quiz_name + ["","1","2"][bracket_offset] + "({})".format(i+1),
+                            "slot_num": str(slot_offset+si+i),
+                            "room_num": str(ri + 3*(bracket_offset//2)),
+                            "type": "SABC"[bracket_offset]
+                        }
+                        quiz.update(get_teams(quiz_name, bracket_offset))
+                        quizzes.append(quiz)
+
+    return quizzes
+
+def generate_semis_json(nTeams, slot_offset, finals_repeats = [1,1,1], bracket_style = 'condensed'):
+    quizzes = generate_bracket_json(
+        bracket_style = bracket_style,
+        slot_offset = slot_offset,
+        num_brackets = nTeams//9,
+        finals_repeats = finals_repeats
+    )
+    NT = nTeams % 9
+    room_num = max([int(q['room_num']) for q in quizzes])+1
+    max_slot = max([int(q['slot_num']) for q in quizzes if not "J" in q['quiz_num']])+1
+    QpT = 3#*((max_slot - slot_offset) // NT)
+    if NT >= 3:
+        quizzes += RoundRobin(
+            nTeams = NT,
+            QpT = QpT
+        ).initialize().anneal(1000).generate_json(
+            room_num,
+            offset_bracket = nTeams//9,
+            offset_slot = slot_offset
+        )
+    return quizzes
 
 
 if __name__ == "__main__":
@@ -550,7 +809,7 @@ if __name__ == "__main__":
     QpT = 7 # number of quizzes per team
     R = 6 # number of rooms
     breaklocation = 0.5 # location of the day break
-    b = Draw(T,QpT,R,breaklocation)
+    b = Prelims(T,QpT,R,breaklocation)
     b.initialize()
     print("Thermalizing")
     b.thermalize(10**4, kT = 0.1, alpha = 0.2, verbose=True)

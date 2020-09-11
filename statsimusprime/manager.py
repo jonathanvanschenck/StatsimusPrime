@@ -14,6 +14,7 @@ from apiclient import errors
 from apiclient.http import MediaFileUpload
 
 from statsimusprime.service import DriveService, StatsService, ScoresheetService
+from statsimusprime.draw import Prelims, generate_semis_json
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets',
           'https://www.googleapis.com/auth/drive']
@@ -276,6 +277,183 @@ class Manager:
 
         return self
 
+    def generate_draw_from_roster(self, draw_params = {}, verbose = True):
+        """Generate a draw + bracket + finals json from the loaded roster
+
+        Note, this method assumes that self.env['roster'] already exists and has
+        all the correct teams loaded into it.
+
+        Note, this method does NOT load the generated draw into self.env['draw'],
+        it only saves a files called `draw.json` in the current working directory
+        which can then be loaded via `.load_draw('draw.json')` and then have the
+        environment saved and pushed with those methods.
+
+        Parameters
+        ----------
+        draw_params : dict : default = {}
+            A dictionary of parameters for generating the draw. Everything has
+            a default value, so providing `{}` will simply create the default draw.
+            The dictionary takes the following items:
+            {
+                skip_round_robin : boolean : default = True
+                    If skip_round_robin, then only full brackets will be generated,
+                    and any teams scoring below the lowest bracket after prelims
+                    will simply be done quizzing. If !skip_round_robin AND the
+                    nTeams%9>=3, then the lowest ranked teams will be given a
+                    round robin-style bracket.
+
+                finals_repeat : list of integers : default = [1, 1, 1]
+                    This list specifies the number of times finals could repeat in
+                    each bracket. For instance, if there are as many as 4 finals in
+                    top-9, but only a single finals quiz in con A and con B, then
+                    [4,1,1].
+
+                bracket_style : str : default = 'condensed'
+                    The type of bracket to use for finals. There are two valid
+                    options. "full" specifies that all brackets will require 3
+                    rooms, and the entire semifinals will only use 4 slots. This
+                    is really only useful if you arn't running a consolation bracket,
+                    or happen to have 6/9 rooms -- unlikely. "condensed" specifies
+                    that each bracket will use 2 rooms (though, they can share
+                    the second room with another bracket, so 2 brackets can fit
+                    in only 3 rooms total).
+
+                num_rooms : int : default = 4
+                    The number of rooms available at the quiz meet.
+
+                QpT : int (multiple of 3) : default = 6
+                    The number of prelim quizzes that each team will have. Unless
+                    the number of teams at the meet happens to be a multiple of 3,
+                    QpT MUST be a multiple of 3, otherwise the algorithm that
+                    creates the draw may fail. You have been warned.
+
+                num_blanks : integer or None : default = None
+                    This is the number of blank ('break') quizzes to include in prelims.
+                    If None is given, then the correct number of blanks to exactly
+                    fill up a prelim draw rectangle will be used.
+
+            }
+
+        verbose : boolean
+            If verbose, all the internal methods will give full printouts of their
+            results
+        """
+
+        finals_repeats = draw_params.pop("finals_repeats", [1,1,1])
+        bracket_style = draw_params.pop("bracket_style", 'condensed')
+        assert bracket_style in ['full', 'condensed'], "Only valid bracket styles are: `full` and `condensed`"
+        num_rooms = draw_params.pop("num_rooms", 4)
+        QpT = draw_params.pop("QpT", 6)
+        num_blanks = draw_params.pop("num_blanks", None)
+        skip_round_robin = draw_params.pop("skip_round_robin", True)
+        
+        # Document me!
+        annealing_steps = draw_params.pop("annealing_steps", 10**4)
+        slots_on_friday = draw_params.pop("slots_on_friday", 8)
+        slots_before_lunch = draw_params.pop("slots_on_friday", 3)
+        friday_start_time = draw_params.pop("friday_start_time", [6+12,20])
+        saturday_start_time = draw_params.pop("saturday_start_time", [9,0])
+        lunch_break_time = draw_params.pop("lunch_break_time", [1,0])
+        prelim_semi_break_time = draw_params.pop("lunch_break_time", [0,20])
+        minutes_per_quiz = draw_params.pop("minutes_per_quiz", 20)
+
+        if len(draw_params.keys()) > 1:
+            print("Unused parameters: ",", ".join(draw_params.keys()))
+
+        team_list = list(set([q['team'] for q in self.env['roster']]))
+        nTeams = len(team_list)
+
+        if verbose:
+            print("Generating Prelims, this may take a few minutes . . . ")
+        prelim = Prelims(
+            nTeams = nTeams,
+            QpT = QpT,
+            nRooms = num_rooms,
+            numblanks = num_blanks
+        ).initialize().anneal(annealing_steps, verbose = verbose)
+        if verbose:
+            prelim.get_stats(verbose=True)
+
+        quizzes = prelim.generate_json(team_list)
+        slot_offset = max([int(q['slot_num']) for q in quizzes])
+
+        if verbose:
+            print("Generating Brackets quiz . . . ")
+
+        if skip_round_robin:
+            if verbose:
+                print("Skipping Round Robin for bottom teams . . .")
+            nTeams -= nTeams%9
+
+        quizzes += generate_semis_json(
+            nTeams = nTeams,
+            slot_offset = slot_offset,
+            finals_repeats = finals_repeats,
+            bracket_style = bracket_style
+        )
+
+        if verbose:
+            print("Attaching time slots to quizzes . . .")
+
+        for quiz in quizzes:
+            quiz['url'] = ''
+
+            # Parse the slot time
+            slot = int(quiz['slot_num'])
+            if slot <= slots_on_friday:
+                template = "Fri {}:{:0>2} {}"
+                h,m = friday_start_time
+                m += minutes_per_quiz * (slot - 1)
+            else:
+                template = "Sat {}:{:0>2} {}"
+                h,m = saturday_start_time
+                adj_slot = slot - slots_on_friday
+                m += minutes_per_quiz * (adj_slot - 1)
+                if adj_slot > slots_before_lunch:
+                    h += lunch_break_time[0]
+                    m += lunch_break_time[1]
+                if quiz['type'] != "P":
+                    h += prelim_semi_break_time[0]
+                    m += prelim_semi_break_time[1]
+            h += m//60
+            m = m%60
+            AMPM = ["AM","PM"][h>=12]
+            h = 1 + ((h-1)%12)
+            quiz['slot_time'] = template.format(h,m,AMPM)
+
+
+        if verbose:
+            print("Saving to `draw.json` . . ")
+        with open('draw.json', "w+") as f:
+            json.dump(quizzes, f, indent = 4)
+
+        if verbose:
+            print("Printing Draw . . . ")
+            num_slots = max([int(q['slot_num']) for q in quizzes])
+            num_rooms = max([int(q['room_num']) for q in quizzes])
+            draw = [[(17+int(r==0)*12)*" " for r in range(num_rooms)] for s in range(num_slots)]
+            for q in quizzes:
+                if q['room_num'] == "1":
+                    ll = "{: >12} | {: >2};{: >4},{: >4},{: >4}".format(
+                        q['slot_time'],
+                        q['quiz_num'],
+                        q['team1'],
+                        q['team2'],
+                        q['team3']
+                    )
+                else:
+                    ll = "{: >2};{: >4},{: >4},{: >4}".format(
+                        q['quiz_num'],
+                        q['team1'],
+                        q['team2'],
+                        q['team3']
+                    )
+                draw[int(q['slot_num'])-1][int(q['room_num'])-1] = ll
+            print(" | ".join([12*" "]+["{: ^17}".format("Room %d" % (r+1)) for r in range(num_rooms)]))
+            for s in draw:
+                print(" | ".join(s))
+        return self
+
     def load_draw(self, file_path):
         """Loads a draw json file into the manager env object
 
@@ -452,7 +630,7 @@ class Manager:
 
         Note, this should only be called after `.generate_quiz_meet()` IF the
         roster has been changed using `.load_roster(...)` i.e. becuase of a late
-        added or droped quizzer. 
+        added or droped quizzer.
         """
         self.stats_service.retrieve_meet_parameters(
             self.env['roster'],
@@ -477,5 +655,7 @@ class Manager:
         return self
 
     def publish_quiz_meet(self):
+        self.stats_service.copy_over_team_summary()\
+            .copy_over_individual_summary()
 
         return self
