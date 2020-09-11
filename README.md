@@ -2,7 +2,7 @@
 Automated System for generating Quiz Meet Stats
 
 # Operation
-TODO
+
 
 # Development
 Get a `credentials.json` file: [see here](https://developers.google.com/docs/api/quickstart/python).
