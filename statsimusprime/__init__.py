@@ -1,3 +1,3 @@
-import statsimusprime.service
-import statsimusprime.manager
-import statsimusprime.draw
+from . import service
+from . import manager
+from . import draw

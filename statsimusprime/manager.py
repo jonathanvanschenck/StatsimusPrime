@@ -13,7 +13,11 @@ from google.auth.transport.requests import Request
 from apiclient import errors
 from apiclient.http import MediaFileUpload
 
-from statsimusprime.service import DriveService, StatsService, ScoresheetService
+# from statsimusprime.service import DriveService, StatsService, ScoresheetService
+
+from statsimusprime.service.driveservice import DriveService
+from statsimusprime.service.statsservice import StatsService
+from statsimusprime.service.scoresheetservice import ScoresheetService
 from statsimusprime.draw import Prelims, generate_semis_json
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets',
@@ -657,5 +661,19 @@ class Manager:
     def publish_quiz_meet(self):
         self.stats_service.copy_over_team_summary()\
             .copy_over_individual_summary()
+
+        return self
+
+    def dumbificate_prelims(self):
+        """This removes all `importranges` from prelim scoresheets
+
+        This is a backup measure if prelim scoresheets are failing to import properly.
+        """
+        for quiz in self.env['draw']:
+            if quiz['type'] == "P":
+                self.ss_service.dumbificate_prelim_scoresheet(
+                    quiz_json = quiz,
+                    roster = self.env['roster']
+                )
 
         return self

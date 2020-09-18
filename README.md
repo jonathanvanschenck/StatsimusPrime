@@ -14,7 +14,7 @@ Set up a virtual python3 environment and activate it:
 
 Currently, `StatsimusPrime` is run through a `python3` shell, which can be configured using:
 ```bash
- (venv) $ python3 test-tools/start_shell.py
+ (venv) $ python3 -i start_shell.py
  >>> # run everything from here
 ```
 
